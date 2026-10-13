@@ -1,0 +1,35 @@
+{
+  "indexes": [
+    { "collectionGroup": "shifts", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "employeeId", "order": "ASCENDING" },
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "startAt", "order": "ASCENDING" } ] },
+    { "collectionGroup": "attendance", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "employeeId", "order": "ASCENDING" },
+      { "fieldPath": "clockInAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "attendance", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "reviewStatus", "order": "ASCENDING" },
+      { "fieldPath": "clockInAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "notifications", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "recipientId", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "notifications", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "recipientId", "order": "ASCENDING" },
+      { "fieldPath": "expiresAt", "order": "ASCENDING" } ] },
+    { "collectionGroup": "announcements", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "audience", "order": "ASCENDING" },
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "publishedAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "announcements", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "audienceIds", "arrayConfig": "CONTAINS" },
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "publishedAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "shiftSwapRequests", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "fromEmployeeId", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "shiftSwapRequests", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "toEmployeeId", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" } ] }
+  ],
+  "fieldOverrides": []
+}

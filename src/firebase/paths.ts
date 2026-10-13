@@ -1,0 +1,18 @@
+// Collection names in one place so rules, indexes and code stay aligned.
+export const C = {
+  employees: "employees",
+  authorizations: "employeeAuthorizations",
+  userLinks: "userLinks",
+  directory: "directory",
+  shifts: "shifts",
+  attendance: "attendance",
+  swaps: "shiftSwapRequests",
+  announcements: "announcements",
+  notifications: "notifications",
+  pushTokens: "pushTokens",
+  settings: "workplaceSettings",
+  qr: "qrCredentials",
+  audit: "auditLogs",
+  exportLogs: "exportLogs",
+  meta: "systemMeta",
+} as const;

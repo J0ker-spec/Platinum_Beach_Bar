@@ -1,0 +1,399 @@
+rules_version = '2';
+
+// Shiftline Firestore Security Rules (Spark plan: no Cloud Functions, so these rules
+// are the ONLY server-side enforcement). See docs/ARCHITECTURE.md for the rationale and
+// docs/SPARK_LIMITATIONS.md for what rules cannot guarantee.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------- helpers
+    function docs() { return /databases/$(database)/documents; }
+    function signedIn() { return request.auth != null; }
+    function emailKey() { return request.auth.token.email.lower(); }
+    function hasLink() { return signedIn() && exists(/databases/$(database)/documents/userLinks/$(request.auth.uid)); }
+    function myId() { return get(/databases/$(database)/documents/userLinks/$(request.auth.uid)).data.employeeId; }
+    function me() { return get(/databases/$(database)/documents/employees/$(myId())); }
+    function isActive() { return hasLink() && me().data.status == 'active'; }
+    function isAdmin() { return isActive() && me().data.role == 'admin'; }
+    function isMe(employeeId) { return isActive() && myId() == employeeId; }
+    function onlyKeys(keys) { return request.resource.data.keys().hasOnly(keys); }
+    function changedOnly(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
+    function pad4(n) {
+      return n < 10 ? '000' + string(n)
+           : n < 100 ? '00' + string(n)
+           : n < 1000 ? '0' + string(n)
+           : string(n);
+    }
+
+    // ------------------------------------------------------------- identity
+    // userLinks/{uid} binds a Google account to ONE pre-authorized employee.
+    // Created exactly once, in the same batch that marks the authorization claimed.
+    match /userLinks/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.auth.token.email_verified == true
+        && onlyKeys(['employeeId', 'linkedAt'])
+        && request.resource.data.linkedAt == request.time
+        && get(/databases/$(database)/documents/employeeAuthorizations/$(emailKey())).data.employeeId == request.resource.data.employeeId
+        && get(/databases/$(database)/documents/employeeAuthorizations/$(emailKey())).data.claimedByUid == null
+        && getAfter(/databases/$(database)/documents/employeeAuthorizations/$(emailKey())).data.claimedByUid == uid
+        && get(/databases/$(database)/documents/employees/$(request.resource.data.employeeId)).data.status == 'active';
+      allow update: if false;
+      allow delete: if isAdmin(); // lets an admin re-bind an employee to a different Google account
+    }
+
+    // employeeAuthorizations/{lowercaseEmail}: admin-created allow-list entry.
+    match /employeeAuthorizations/{email} {
+      allow read: if signedIn() && request.auth.token.email_verified == true
+        && (email == emailKey() || isAdmin());
+      allow create: if isAdmin()
+        && onlyKeys(['employeeId', 'claimedByUid', 'claimedAt', 'createdBy', 'createdAt'])
+        && request.resource.data.claimedByUid == null
+        && request.resource.data.createdBy == myId()
+        && existsAfter(/databases/$(database)/documents/employees/$(request.resource.data.employeeId));
+      // Employee claims their own entry (paired with userLinks create above).
+      allow update: if signedIn() && request.auth.token.email_verified == true
+        && email == emailKey()
+        && resource.data.claimedByUid == null
+        && request.resource.data.claimedByUid == request.auth.uid
+        && changedOnly(['claimedByUid', 'claimedAt'])
+        && request.resource.data.claimedAt == request.time
+        && existsAfter(/databases/$(database)/documents/userLinks/$(request.auth.uid));
+      // Admin releases a claim so the employee can sign in with another Google account.
+      allow update: if isAdmin() && changedOnly(['claimedByUid', 'claimedAt'])
+        && request.resource.data.claimedByUid == null;
+      allow delete: if false;
+    }
+
+    // ------------------------------------------------------------ employees
+    match /employees/{employeeId} {
+      // An employee can always read their own doc (even if deactivated) so the app can say why access ended.
+      allow read: if isAdmin() || (hasLink() && myId() == employeeId);
+
+      // Concurrency-safe sequential IDs: the id must equal 'EMP-' + pad(counter) where the counter
+      // is incremented by exactly 1 in the same atomic commit.
+      allow create: if isAdmin()
+        && employeeId == 'EMP-' + pad4(getAfter(/databases/$(database)/documents/systemMeta/counters).data.employeeSeq)
+        && get(/databases/$(database)/documents/systemMeta/counters).data.employeeSeq + 1
+           == getAfter(/databases/$(database)/documents/systemMeta/counters).data.employeeSeq
+        && onlyKeys(['firstName', 'lastName', 'email', 'phone', 'title', 'status', 'role', 'createdBy', 'createdAt', 'updatedAt'])
+        && request.resource.data.role == 'employee'
+        && request.resource.data.status == 'active'
+        && request.resource.data.email == request.resource.data.email.lower()
+        && request.resource.data.createdBy == myId()
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && existsAfter(/databases/$(database)/documents/employeeAuthorizations/$(request.resource.data.email))
+        && existsAfter(/databases/$(database)/documents/directory/$(employeeId));
+
+      // Admin edits: promote/deactivate/edit. Cannot change own role/status (no self-lockout / self-promotion loop).
+      allow update: if isAdmin()
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.role in ['employee', 'admin']
+        && request.resource.data.status in ['active', 'deactivated']
+        && request.resource.data.updatedAt == request.time
+        && (myId() != employeeId
+            || (request.resource.data.role == resource.data.role
+                && request.resource.data.status == resource.data.status));
+
+      // Employee self-service: phone only. Role, status, email, title are never client-writable by employees.
+      allow update: if isMe(employeeId)
+        && changedOnly(['phone', 'updatedAt'])
+        && request.resource.data.phone is string
+        && request.resource.data.phone.size() <= 32
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if false; // deactivate instead; IDs are never reused
+    }
+
+    // Minimal colleague directory (name + title only) for swap pickers. No contact data.
+    match /directory/{employeeId} {
+      allow read: if isActive();
+      allow create, update: if isAdmin()
+        && onlyKeys(['displayName', 'title', 'status'])
+        && request.resource.data.status in ['active', 'deactivated'];
+      allow delete: if false;
+    }
+
+    // --------------------------------------------------------------- system
+    match /systemMeta/counters {
+      allow read: if isAdmin();
+      allow create: if false; // seeded once from the Firebase console (see docs/FIRST_ADMIN.md)
+      allow update: if isAdmin()
+        && onlyKeys(['employeeSeq'])
+        && request.resource.data.employeeSeq == resource.data.employeeSeq + 1;
+      allow delete: if false;
+    }
+
+    // Export / retention state that must outlive notifications.
+    match /systemMeta/maintenance {
+      allow read, create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+
+    match /workplaceSettings/{doc} {
+      allow read: if isActive();
+      allow create, update: if isAdmin()
+        && doc == 'main'
+        && onlyKeys(['businessName', 'timezone', 'clockInEarlyMinutes', 'clockInLateMinutes', 'updatedBy', 'updatedAt'])
+        && request.resource.data.clockInEarlyMinutes is int
+        && request.resource.data.clockInEarlyMinutes >= 0 && request.resource.data.clockInEarlyMinutes <= 240
+        && request.resource.data.clockInLateMinutes is int
+        && request.resource.data.clockInLateMinutes >= 0 && request.resource.data.clockInLateMinutes <= 480
+        && request.resource.data.updatedBy == myId()
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    // Single active QR credential. Employees can NOT read it; rules compare their submitted proof to it.
+    match /qrCredentials/current {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && request.resource.data.version == 1 && validQr();
+      allow update: if isAdmin()
+        && request.resource.data.version == resource.data.version + 1
+        && validQr();
+      allow delete: if false;
+      function validQr() {
+        return onlyKeys(['token', 'version', 'rotatedBy', 'rotatedAt'])
+          && request.resource.data.token is string
+          && request.resource.data.token.size() >= 32
+          && request.resource.data.rotatedBy == myId()
+          && request.resource.data.rotatedAt == request.time;
+      }
+    }
+
+    // --------------------------------------------------------------- shifts
+    match /shifts/{shiftId} {
+      allow read: if isAdmin()
+        || (isActive() && resource.data.employeeId == myId() && resource.data.status == 'published');
+      allow create: if isAdmin() && validShift() && request.resource.data.createdBy == myId();
+      allow update: if isAdmin() && validShift()
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.revision == resource.data.revision + 1;
+      allow delete: if isAdmin() && resource.data.status == 'draft';
+      function validShift() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['employeeId', 'date', 'startAt', 'endAt', 'breakMinutes', 'label', 'notes',
+                                 'status', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt', 'revision', 'changedAfterPublish'])
+          && d.startAt is timestamp && d.endAt is timestamp
+          && d.endAt > d.startAt                                   // overnight shifts: endAt falls on the next day
+          && d.endAt <= d.startAt + duration.value(24, 'h')
+          && d.status in ['draft', 'published', 'cancelled']
+          && d.breakMinutes is int && d.breakMinutes >= 0 && d.breakMinutes <= 240
+          && d.updatedBy == myId()
+          && d.updatedAt == request.time
+          && get(/databases/$(database)/documents/employees/$(d.employeeId)).data.status == 'active';
+      }
+    }
+
+    // ----------------------------------------------------------- attendance
+    // attendance/{employeeId_shiftId}: one record per shift. Never deleted.
+    match /attendance/{recordId} {
+      allow read: if isAdmin() || (isActive() && resource.data.employeeId == myId());
+
+      // Clock-in. Replay of the same action is rejected as "already exists"; the client then reads the
+      // record and treats a matching clockInActionId as idempotent success.
+      allow create: if isActive() && validClockIn() || isAdmin() && validAdminCreate();
+
+      // Clock-out (employee) or correction (admin; must be paired with an immutable correction doc).
+      allow update: if isActive() && validClockOut() || isAdmin() && validAdminUpdate();
+      allow delete: if false;
+
+      function qrOk(proof) {
+        return proof == get(/databases/$(database)/documents/qrCredentials/current).data.token;
+      }
+      function settings() { return get(/databases/$(database)/documents/workplaceSettings/main).data; }
+      function shiftOf(id) { return get(/databases/$(database)/documents/shifts/$(id)).data; }
+
+      function validClockIn() {
+        let d = request.resource.data;
+        let s = shiftOf(d.shiftId);
+        return d.keys().hasOnly(['employeeId', 'shiftId', 'shiftDate', 'clockInAt', 'clockInReportedAt', 'clockInSource',
+                                 'clockInActionId', 'qrProof', 'reviewStatus', 'late'])
+          && d.employeeId == myId()
+          && recordId == d.employeeId + '_' + d.shiftId
+          && s.employeeId == d.employeeId
+          && s.status == 'published'
+          && d.shiftDate == s.date
+          && d.clockInAt == request.time                            // trusted server time
+          && d.late == false
+          && d.clockInActionId is string && d.clockInActionId.size() >= 16 && d.clockInActionId.size() <= 64
+          && d.clockInReportedAt is timestamp
+          && d.clockInReportedAt <= request.time + duration.value(5, 'm')
+          && qrOk(d.qrProof)
+          && (d.clockInSource == 'online'
+              ? (d.reviewStatus == 'confirmed'
+                 && request.time >= s.startAt - duration.value(settings().clockInEarlyMinutes, 'm')
+                 && request.time <= s.startAt + duration.value(settings().clockInLateMinutes, 'm'))
+              : (d.clockInSource == 'offline' && d.reviewStatus == 'pending_review'));
+      }
+
+      function validClockOut() {
+        let d = request.resource.data;
+        return resource.data.employeeId == myId()
+          && !('clockOutAt' in resource.data)
+          && resource.data.reviewStatus != 'rejected'
+          && changedOnly(['clockOutAt', 'clockOutReportedAt', 'clockOutSource', 'clockOutActionId', 'clockOutProof', 'reviewStatus'])
+          && d.clockOutAt == request.time
+          && d.clockOutActionId is string && d.clockOutActionId.size() >= 16 && d.clockOutActionId.size() <= 64
+          && d.clockOutActionId != resource.data.clockInActionId
+          && d.clockOutReportedAt is timestamp
+          && d.clockOutReportedAt <= request.time + duration.value(5, 'm')
+          && qrOk(d.clockOutProof)
+          && (d.clockOutSource == 'online'
+              ? d.reviewStatus == resource.data.reviewStatus
+              : (d.clockOutSource == 'offline' && d.reviewStatus == 'pending_review'));
+      }
+
+      // Every admin write to attendance must be accompanied by an immutable correction entry
+      // (original + corrected value + admin + server time) created in the same commit.
+      function auditPaired() {
+        let id = request.resource.data.lastCorrectionId;
+        let path = /databases/$(database)/documents/attendance/$(recordId)/corrections/$(id);
+        return id is string
+          && existsAfter(path)
+          && getAfter(path).data.adminId == myId();
+      }
+      function validAdminUpdate() {
+        return auditPaired()
+          && request.resource.data.employeeId == resource.data.employeeId
+          && request.resource.data.shiftId == resource.data.shiftId
+          && request.resource.data.reviewStatus in ['confirmed', 'pending_review', 'rejected'];
+      }
+      function validAdminCreate() {
+        return auditPaired()
+          && recordId == request.resource.data.employeeId + '_' + request.resource.data.shiftId
+          && request.resource.data.clockInSource == 'admin';
+      }
+
+      match /corrections/{correctionId} {
+        allow read: if isAdmin();
+        allow create: if isAdmin()
+          && request.resource.data.adminId == myId()
+          && request.resource.data.changedAt == request.time
+          && request.resource.data.keys().hasOnly(['adminId', 'changedAt', 'original', 'updated', 'note']);
+        allow update, delete: if false; // append-only audit trail
+      }
+    }
+
+    // ---------------------------------------------------------- shift swaps
+    match /shiftSwapRequests/{swapId} {
+      allow read: if isAdmin() || (isActive() && (resource.data.fromEmployeeId == myId() || resource.data.toEmployeeId == myId()));
+
+      allow create: if isActive()
+        && onlyKeys(['fromEmployeeId', 'toEmployeeId', 'shiftId', 'reason', 'status', 'createdAt', 'updatedAt'])
+        && request.resource.data.fromEmployeeId == myId()
+        && request.resource.data.toEmployeeId != myId()
+        && request.resource.data.status == 'pending_peer'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && get(/databases/$(database)/documents/shifts/$(request.resource.data.shiftId)).data.employeeId == myId()
+        && get(/databases/$(database)/documents/shifts/$(request.resource.data.shiftId)).data.status == 'published'
+        && get(/databases/$(database)/documents/shifts/$(request.resource.data.shiftId)).data.startAt > request.time
+        && get(/databases/$(database)/documents/employees/$(request.resource.data.toEmployeeId)).data.status == 'active';
+
+      // Colleague accepts or declines.
+      allow update: if isMe(resource.data.toEmployeeId)
+        && resource.data.status == 'pending_peer'
+        && request.resource.data.status in ['pending_admin', 'declined']
+        && changedOnly(['status', 'updatedAt'])
+        && request.resource.data.updatedAt == request.time;
+
+      // Requester withdraws.
+      allow update: if isMe(resource.data.fromEmployeeId)
+        && resource.data.status in ['pending_peer', 'pending_admin']
+        && request.resource.data.status == 'cancelled'
+        && changedOnly(['status', 'updatedAt'])
+        && request.resource.data.updatedAt == request.time;
+
+      // Admin decision. Approval is only valid if, in the SAME atomic commit, the shift moves from the
+      // requester to the colleague, and the shift still belonged to the requester beforehand
+      // (so two concurrent approvals for one shift cannot both succeed).
+      allow update: if isAdmin()
+        && resource.data.status == 'pending_admin'
+        && changedOnly(['status', 'updatedAt', 'decidedBy'])
+        && request.resource.data.decidedBy == myId()
+        && request.resource.data.updatedAt == request.time
+        && (request.resource.data.status == 'rejected'
+            || (request.resource.data.status == 'approved'
+                && get(/databases/$(database)/documents/shifts/$(resource.data.shiftId)).data.employeeId == resource.data.fromEmployeeId
+                && getAfter(/databases/$(database)/documents/shifts/$(resource.data.shiftId)).data.employeeId == resource.data.toEmployeeId
+                && get(/databases/$(database)/documents/employees/$(resource.data.toEmployeeId)).data.status == 'active'));
+      allow delete: if false;
+    }
+
+    // -------------------------------------------------------- announcements
+    match /announcements/{id} {
+      allow read: if isAdmin()
+        || (isActive() && resource.data.status == 'published'
+            && (resource.data.audience == 'all' || myId() in resource.data.audienceIds));
+      allow create, update: if isAdmin()
+        && onlyKeys(['title', 'body', 'priority', 'status', 'audience', 'audienceIds', 'publishedBy', 'createdAt', 'publishedAt'])
+        && request.resource.data.audience in ['all', 'selected']
+        && request.resource.data.status in ['draft', 'published']
+        && request.resource.data.publishedBy == myId();
+      allow delete: if isAdmin();
+    }
+
+    // -------------------------------------------------------- notifications
+    // Small pointer documents; expiresAt = createdAt + 5 calendar months (150..153 days, enforced as a range).
+    match /notifications/{id} {
+      // Owner may read expired docs too (needed for cleanup queries); the UI hides them.
+      allow read: if isActive() && (resource.data.recipientId == myId() || isAdmin());
+      allow create: if isActive()
+        && onlyKeys(['recipientId', 'type', 'title', 'refType', 'refId', 'createdAt', 'expiresAt', 'read', 'createdBy'])
+        && request.resource.data.read == false
+        && request.resource.data.createdBy == myId()
+        && request.resource.data.title is string && request.resource.data.title.size() <= 120
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.expiresAt >= request.time + duration.value(150, 'd')
+        && request.resource.data.expiresAt <= request.time + duration.value(153, 'd')
+        && (isAdmin() || validPeerNotice());
+      allow update: if isActive() && resource.data.recipientId == myId() && changedOnly(['read']);
+      allow delete: if isActive() && (resource.data.recipientId == myId() || isAdmin());
+
+      function validPeerNotice() {
+        let d = request.resource.data;
+        let swap = getAfter(/databases/$(database)/documents/shiftSwapRequests/$(d.refId)).data;
+        return d.type in ['swap_request', 'swap_update']
+          && d.refType == 'swap'
+          && d.recipientId != myId()
+          && (swap.fromEmployeeId == myId() || swap.toEmployeeId == myId())
+          && (swap.fromEmployeeId == d.recipientId || swap.toEmployeeId == d.recipientId);
+      }
+    }
+
+    match /pushTokens/{employeeId} {
+      allow read: if isAdmin() || isMe(employeeId);
+      allow create, update: if isMe(employeeId)
+        && onlyKeys(['token', 'platform', 'updatedAt'])
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if isMe(employeeId) || isAdmin();
+    }
+
+    // ------------------------------------------------------ append-only logs
+    match /exportLogs/{id} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && onlyKeys(['exportedAt', 'exportedBy', 'format', 'rangeStart', 'rangeEnd', 'recordCount', 'confirmedSaved'])
+        && request.resource.data.exportedBy == myId()
+        && request.resource.data.exportedAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /auditLogs/{id} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && request.resource.data.actorId == myId()
+        && request.resource.data.at == request.time;
+      allow update, delete: if false;
+    }
+
+    // Default deny.
+    match /{document=**} { allow read, write: if false; }
+  }
+}

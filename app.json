@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "PlatinumX",
+    "slug": "platinumx",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "platinumx",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.vidal.platinumx"
+    },
+    "android": {
+      "package": "com.vidal.platinumx",
+      "softwareKeyboardLayoutMode": "resize"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-splash-screen",
+      "expo-status-bar",
+      "expo-web-browser",
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "044ff6fe-cc12-4440-9c3a-12b61eaa732a"
+      }
+    }
+  }
+}
