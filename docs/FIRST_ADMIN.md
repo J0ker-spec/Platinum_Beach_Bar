@@ -19,3 +19,18 @@ employee data in fixtures.
 
 Changing the owner later: promote another employee to admin in the app, then give that person Firebase project Owner
 access (see HANDOVER notes in the final report once written).
+
+## Scripted alternative (email + password admin)
+
+`scripts/provision-admin.cjs` does all of the above from the terminal, using the credentials of the account logged in to
+the Firebase CLI (`firebase login`). It also creates the Firebase Auth user with a verified email, so the admin can log
+in with email + password right away. Pass the password through the environment, never commit it:
+
+```powershell
+$env:FIREBASE_PROJECT="platnumx"; $env:ADMIN_EMAIL="admin@example.com"; $env:ADMIN_PASSWORD="<password>"
+$env:ADMIN_FIRST="Admin"; $env:ADMIN_LAST="User"
+node scripts/provision-admin.cjs
+```
+
+Re-running is safe: it resets the password/verification and rewrites the seed documents. Change the password after the
+first login (Forgot password sends a reset email).

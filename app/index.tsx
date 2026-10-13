@@ -1,4 +1,4 @@
- import { useAuth } from "@/src/auth/AuthProvider";
+﻿ import { useAuth } from "@/src/auth/AuthProvider";
 import { APP_NAME, colors, type } from "@/src/theme";
 import { AppLogo } from "@/src/ui";
 import { Redirect } from "expo-router";
@@ -10,6 +10,10 @@ export default function Splash() {
   if (status === "ready" && profile) {
     return <Redirect href={profile.role === "admin" ? "/(admin)/(tabs)/dashboard" : "/(employee)/(tabs)/home"} />;
   }
+  if (status === "unverified") return <Redirect href="/(auth)/verify-email" />;
+  // Signed-out visitors land on sign up first; people already in the system can switch to log in.
+  // Authenticated-but-blocked states (unauthorized, deactivated, error) show their message on the login screen.
+  if (status === "signedOut") return <Redirect href="/(auth)/signup" />;
   if (status !== "loading" && status !== "checking") return <Redirect href="/(auth)/login" />;
 
   return (

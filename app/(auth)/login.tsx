@@ -1,7 +1,9 @@
-import { useAuth, type AuthStatus } from "@/src/auth/AuthProvider";
-import { APP_NAME, BUSINESS_NAME, colors, spacing, type } from "@/src/theme";
-import { AppLogo, Button, Heading, Muted, Screen } from "@/src/ui";
+﻿import { useAuth, type AuthStatus } from "@/src/auth/AuthProvider";
+import { AuthShell, FormError, OrDivider, PasswordField, SwitchLink } from "@/src/auth/AuthShell";
+import { BUSINESS_NAME, colors, type } from "@/src/theme";
+import { Button, TextField } from "@/src/ui";
 import { useRouter } from "expo-router";
+import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
 const DEMO = process.env.EXPO_PUBLIC_DEMO_MODE === "true";
@@ -13,12 +15,12 @@ const MESSAGES: Partial<Record<AuthStatus, { title: string; body: string }>> = {
     body: "Firebase settings are missing. Copy .env.example to .env and fill in the project values, then restart the app.",
   },
   unauthorized: {
-    title: "No employee record for this Google account",
-    body: "Your Google account is not authorized. Ask your administrator to add your Google email address, then try again.",
+    title: "No employee record for this account",
+    body: "Your account hasn't been authorized yet. Ask your administrator to add your email address, then log in again.",
   },
   alreadyLinked: {
     title: "Employee record linked to another account",
-    body: "This employee record is already connected to a different Google account. Ask your administrator to reset the link.",
+    body: "This employee record is already connected to a different account. Ask your administrator to reset the link.",
   },
   deactivated: {
     title: "Account deactivated",
@@ -29,56 +31,93 @@ const MESSAGES: Partial<Record<AuthStatus, { title: string; body: string }>> = {
 
 export default function Login() {
   const router = useRouter();
-  const { status, error, googleEmail, signInWithGoogle, signOut, canSignIn } = useAuth();
+  const { status, error, googleEmail, signInWithEmail, signInWithGoogle, signOut, canSignIn, clearError } = useAuth();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [touched, setTouched] = useState(false);
+
+  useEffect(() => clearError, [clearError]);
+
+  // Logged in with an email that is not verified yet.
+  useEffect(() => {
+    if (status === "unverified") router.replace("/(auth)/verify-email");
+  }, [status, router]);
+
   const msg = MESSAGES[status];
-  const busy = status === "loading" || status === "checking";
+  const checking = status === "loading" || status === "checking";
   const blocked = status === "unauthorized" || status === "alreadyLinked" || status === "deactivated";
 
+  const submit = async () => {
+    setTouched(true);
+    if (!email.trim() || !password || busy) return;
+    setBusy(true);
+    await signInWithEmail(email, password);
+    setBusy(false);
+  };
+
   return (
-    <Screen scroll>
-      <View style={{ alignItems: "center", marginTop: 12, marginBottom: 28, gap: 8 }}>
-        <AppLogo />
-        <Text style={[type.card, { color: colors.primary }]}>{APP_NAME}</Text>
-      </View>
-      <Heading>Welcome back</Heading>
-      <Muted>Sign in with your Google account to view your work schedule and attendance.</Muted>
-      <View style={{ height: spacing.xl }} />
-      <View style={{ gap: 14 }}>
-        {msg ? (
-          <View style={{ backgroundColor: colors.errorSoft, borderRadius: 14, padding: 12, gap: 4 }}>
-            <Text style={[type.card, { color: colors.error }]}>{msg.title}</Text>
-            <Text style={[type.meta, { color: colors.error }]}>{status === "error" ? error ?? "Please try again." : msg.body}</Text>
-            {blocked && googleEmail ? (
-              <Text style={[type.tiny, { color: colors.error }]}>Signed in as {googleEmail}</Text>
-            ) : null}
-          </View>
-        ) : null}
-        {blocked ? (
-          <Button label="Use a different Google account" onPress={signOut} variant="secondary" />
-        ) : (
-          <Button
-            label={busy ? "Checking your account…" : "Continue with Google"}
-            onPress={signInWithGoogle}
-            disabled={status === "unconfigured" || !canSignIn}
-            loading={busy}
-          />
-        )}
-        <Text style={[type.tiny, { color: colors.muted, textAlign: "center" }]}>
-          Only employees authorized by your administrator can sign in.
-        </Text>
-      </View>
-      {DEMO ? (
-        <View style={{ marginTop: 28, alignItems: "center", gap: 12 }}>
-          <Pressable
-            onPress={() => router.push("/(auth)/preview-roles")}
-            style={{ width: "100%", borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.lavenderSurface, padding: 14 }}
-          >
-            <Text style={[type.meta, { color: colors.secondary }]}>Demo mode (fake data, no backend)</Text>
-            <Text style={[type.card, { color: colors.text }]}>Preview employee or administrator experience</Text>
-          </Pressable>
-        </View>
+    <AuthShell title="Welcome back" subtitle="Log in to view your work schedule and attendance.">
+      {msg ? (
+        <FormError title={msg.title} body={status === "error" ? error ?? "Please try again." : msg.body} />
+      ) : error ? (
+        <FormError body={error} />
       ) : null}
-      <Text style={[type.tiny, { color: colors.muted, textAlign: "center", marginTop: 20 }]}>{BUSINESS_NAME}</Text>
-    </Screen>
+      {blocked ? (
+        <>
+          {googleEmail ? <Text style={[type.meta, { color: colors.textSecondary }]}>Signed in as {googleEmail}</Text> : null}
+          <Button label="Use a different account" onPress={signOut} variant="secondary" />
+        </>
+      ) : (
+        <>
+          <TextField
+            label="Email"
+            value={email}
+            onChangeText={setEmail}
+            placeholder="name@workplace.com"
+            keyboardType="email-address"
+            autoComplete="email"
+            error={touched && !email.trim() ? "Enter your email." : undefined}
+          />
+          <View style={{ gap: 8 }}>
+            <PasswordField
+              label="Password"
+              value={password}
+              onChangeText={setPassword}
+              placeholder="Your password"
+              autoComplete="current-password"
+              error={touched && !password ? "Enter your password." : undefined}
+              onSubmitEditing={submit}
+            />
+            <Pressable onPress={() => router.push("/(auth)/forgot-password")} accessibilityRole="link" hitSlop={8} style={{ alignSelf: "flex-end" }}>
+              <Text style={[type.meta, { color: colors.primary }]}>Forgot password?</Text>
+            </Pressable>
+          </View>
+          <Button
+            label={checking ? "Checking your accountâ€¦" : "Log in"}
+            onPress={submit}
+            disabled={status === "unconfigured"}
+            loading={busy || checking}
+          />
+          {canSignIn ? (
+            <>
+              <OrDivider />
+              <Button label="Continue with Google" variant="secondary" onPress={signInWithGoogle} disabled={checking} />
+            </>
+          ) : null}
+          <SwitchLink prompt="New here?" action="Create an account" onPress={() => router.replace("/(auth)/signup")} />
+        </>
+      )}
+      {DEMO ? (
+        <Pressable
+          onPress={() => router.push("/(auth)/preview-roles")}
+          style={{ borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.lavenderSurface, padding: 14 }}
+        >
+          <Text style={[type.meta, { color: colors.secondary }]}>Demo mode (fake data, no backend)</Text>
+          <Text style={[type.card, { color: colors.text }]}>Preview employee or administrator experience</Text>
+        </Pressable>
+      ) : null}
+      <Text style={[type.tiny, { color: colors.muted, textAlign: "center" }]}>{BUSINESS_NAME}</Text>
+    </AuthShell>
   );
 }

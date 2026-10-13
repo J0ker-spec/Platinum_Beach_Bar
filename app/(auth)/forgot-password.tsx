@@ -1,59 +1,51 @@
+import { useAuth } from "@/src/auth/AuthProvider";
+import { AuthShell, FormError, SwitchLink } from "@/src/auth/AuthShell";
 import { colors, type } from "@/src/theme";
-import { Button, Card, Heading, Muted, Screen, TextField } from "@/src/ui";
-import { CheckCircle2 } from "lucide-react-native";
+import { Button, TextField } from "@/src/ui";
 import { useRouter } from "expo-router";
-import { useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { CheckCircle2 } from "lucide-react-native";
+import { useEffect, useState } from "react";
+import { Text, View } from "react-native";
 
 export default function ForgotPassword() {
   const router = useRouter();
+  const { sendPasswordReset, error, clearError } = useAuth();
   const [email, setEmail] = useState("");
-  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
 
-  const send = () => {
-    if (!email) {
-      setError("Enter the email on your workplace account.");
-      setSent(false);
-      return;
-    }
-    if (email.toLowerCase().includes("fail")) {
-      setError("Reset instructions could not be sent. Try again.");
-      setSent(false);
-      return;
-    }
-    setError(undefined);
-    setSent(true);
+  useEffect(() => clearError, [clearError]);
+
+  const send = async () => {
+    if (!email.trim() || busy) return;
+    setBusy(true);
+    setSent(await sendPasswordReset(email));
+    setBusy(false);
   };
 
   return (
-    <Screen scroll>
-      <Pressable onPress={() => router.back()} accessibilityLabel="Back">
-        <Text style={[type.meta, { color: colors.primary, marginBottom: 16 }]}>Back</Text>
-      </Pressable>
-      <Heading>Reset your password</Heading>
-      <Muted>We’ll send reset instructions to the email on your workplace account. Accounts are created by an administrator.</Muted>
-      <View style={{ height: 20 }} />
+    <AuthShell title="Reset your password" subtitle="We'll email you a link to choose a new one.">
+      {error && !sent ? <FormError body={error} /> : null}
       <TextField
         label="Email"
         value={email}
         onChangeText={setEmail}
         placeholder="name@workplace.com"
         keyboardType="email-address"
-        error={error}
+        autoComplete="email"
+        onSubmitEditing={send}
       />
-      <View style={{ height: 16 }} />
-      <Button label="Send reset instructions" onPress={send} disabled={!email} />
+      <Button label="Send reset link" onPress={send} disabled={!email.trim()} loading={busy} />
       {sent ? (
-        <Card style={{ marginTop: 16, backgroundColor: colors.successSoft, borderColor: "#CDEADF" }}>
+        <View style={{ backgroundColor: colors.successSoft, borderRadius: 14, padding: 12, gap: 6 }}>
           <CheckCircle2 size={22} color={colors.success} />
-          <Text style={[type.card, { color: colors.text, marginTop: 8 }]}>Instructions requested</Text>
-          <Muted>In production, a reset email would be sent to {email}. This prototype only previews the confirmation.</Muted>
-        </Card>
+          <Text style={[type.card, { color: colors.text }]}>Check your inbox</Text>
+          <Text style={[type.meta, { color: colors.textSecondary }]}>
+            If an account exists for {email.trim()}, a reset link is on its way.
+          </Text>
+        </View>
       ) : null}
-      <Pressable onPress={() => router.replace("/(auth)/login")} style={{ marginTop: 20 }}>
-        <Text style={[type.meta, { color: colors.primary, textAlign: "center" }]}>Return to login</Text>
-      </Pressable>
-    </Screen>
+      <SwitchLink prompt="Remembered it?" action="Back to log in" onPress={() => router.replace("/(auth)/login")} />
+    </AuthShell>
   );
 }

@@ -1,4 +1,4 @@
-export const APP_NAME = "[App Name]";
+export const APP_NAME = "PlatinumX";
 export const BUSINESS_NAME = "Northline Café";
 export const WORKPLACE_ADDRESS = "14 Harbour Street";
 

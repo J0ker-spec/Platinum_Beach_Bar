@@ -3,9 +3,22 @@ import { googleClientIds, isFirebaseConfigured } from "@/src/firebase/config";
 import { C } from "@/src/firebase/paths";
 import * as Google from "expo-auth-session/providers/google";
 import * as WebBrowser from "expo-web-browser";
-import { GoogleAuthProvider, onAuthStateChanged, signInWithCredential, signOut as fbSignOut, type User } from "firebase/auth";
+import {
+  createUserWithEmailAndPassword,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  reload,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  signInWithCredential,
+  signInWithEmailAndPassword,
+  signOut as fbSignOut,
+  updateProfile,
+  type User,
+} from "firebase/auth";
 import { doc, getDoc, onSnapshot, serverTimestamp, writeBatch } from "firebase/firestore";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { Platform } from "react-native";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -26,6 +39,7 @@ export type AuthStatus =
   | "loading"
   | "signedOut"
   | "checking" // verifying authorization / linking account
+  | "unverified" // email/password account whose email address has not been verified yet
   | "ready"
   | "unauthorized" // Google account has no employee authorization
   | "alreadyLinked" // authorization claimed by a different Google account
@@ -38,11 +52,48 @@ type AuthCtx = {
   googleEmail: string | null;
   error: string | null;
   signInWithGoogle: () => Promise<void>;
+  signUpWithEmail: (input: { name: string; email: string; password: string }) => Promise<boolean>;
+  signInWithEmail: (email: string, password: string) => Promise<boolean>;
+  sendPasswordReset: (email: string) => Promise<boolean>;
+  resendVerification: () => Promise<boolean>;
+  refreshVerification: () => Promise<void>;
+  clearError: () => void;
   signOut: () => Promise<void>;
   canSignIn: boolean;
 };
 
+/** Turn Firebase Auth error codes into messages a person can act on. */
+export function authErrorMessage(e: any): string {
+  switch (e?.code) {
+    case "auth/email-already-in-use":
+      return "An account with this email already exists. Try logging in instead.";
+    case "auth/invalid-email":
+      return "That email address doesn't look right.";
+    case "auth/weak-password":
+      return "Choose a stronger password (at least 8 characters).";
+    case "auth/invalid-credential":
+    case "auth/wrong-password":
+    case "auth/user-not-found":
+      return "Incorrect email or password.";
+    case "auth/user-disabled":
+      return "This account has been disabled. Contact your administrator.";
+    case "auth/too-many-requests":
+      return "Too many attempts. Wait a few minutes and try again.";
+    case "auth/network-request-failed":
+      return "Can't reach the server. Check your connection and try again.";
+    default:
+      return e?.message ?? "Something went wrong. Please try again.";
+  }
+}
+
 const Ctx = createContext<AuthCtx | null>(null);
+
+const hasGoogleClientId =
+  Platform.OS === "ios"
+    ? !!googleClientIds.ios
+    : Platform.OS === "android"
+      ? !!googleClientIds.android
+      : !!googleClientIds.web;
 
 /** Run on sign-out so private cached data (e.g. the offline queue) does not survive account switches. */
 const signOutHooks = new Set<() => void | Promise<void>>();
@@ -58,28 +109,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [googleEmail, setGoogleEmail] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [promptGoogle, setPromptGoogle] = useState<(() => Promise<void>) | null>(null);
   const unsubProfile = useRef<(() => void) | null>(null);
 
-  const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
-    webClientId: googleClientIds.web || undefined,
-    androidClientId: googleClientIds.android || undefined,
-    iosClientId: googleClientIds.ios || undefined,
-  });
-
-  // Exchange the Google ID token for a Firebase session.
-  useEffect(() => {
-    if (response?.type === "success") {
-      const idToken = response.params.id_token;
-      setStatus("checking");
-      signInWithCredential(auth, GoogleAuthProvider.credential(idToken)).catch((e) => {
-        setError(e?.message ?? "Google sign-in failed.");
-        setStatus("error");
-      });
-    } else if (response?.type === "error") {
-      setError(response.error?.message ?? "Google sign-in failed.");
+  const handleGoogleSuccess = useCallback((idToken: string) => {
+    setStatus("checking");
+    signInWithCredential(auth, GoogleAuthProvider.credential(idToken)).catch((e) => {
+      setError(e?.message ?? "Google sign-in failed.");
       setStatus("error");
-    }
-  }, [response]);
+    });
+  }, []);
+
+  const handleGoogleError = useCallback((message: string) => {
+    setError(message);
+    setStatus("error");
+  }, []);
+
+  const handlePromptReady = useCallback((prompt: (() => Promise<void>) | null) => {
+    setPromptGoogle(() => prompt);
+  }, []);
 
   useEffect(() => {
     if (!isFirebaseConfigured) return;
@@ -106,8 +154,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setStatus("checking");
     setError(null);
     try {
-      if (!user.emailVerified || !user.email) {
+      if (!user.email) {
         setStatus("unauthorized");
+        return;
+      }
+      if (!user.emailVerified) {
+        setStatus("unverified");
         return;
       }
       const emailKey = user.email.toLowerCase();
@@ -173,8 +225,81 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signInWithGoogle = useCallback(async () => {
     setError(null);
-    await promptAsync();
-  }, [promptAsync]);
+    if (!promptGoogle) {
+      setError("Google sign-in is not configured for this platform.");
+      setStatus("error");
+      return;
+    }
+    await promptGoogle();
+  }, [promptGoogle]);
+
+  const signUpWithEmail = useCallback(async ({ name, email, password }: { name: string; email: string; password: string }) => {
+    setError(null);
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+      if (name.trim()) await updateProfile(cred.user, { displayName: name.trim() });
+      await sendEmailVerification(cred.user).catch(() => undefined); // can be re-sent from the verify screen
+      return true;
+    } catch (e: any) {
+      setError(authErrorMessage(e));
+      return false;
+    }
+  }, []);
+
+  const signInWithEmail = useCallback(async (email: string, password: string) => {
+    setError(null);
+    try {
+      await signInWithEmailAndPassword(auth, email.trim(), password);
+      return true;
+    } catch (e: any) {
+      setError(authErrorMessage(e));
+      return false;
+    }
+  }, []);
+
+  const sendPasswordReset = useCallback(async (email: string) => {
+    setError(null);
+    try {
+      await sendPasswordResetEmail(auth, email.trim());
+      return true;
+    } catch (e: any) {
+      // Don't reveal whether an address has an account.
+      if (e?.code === "auth/user-not-found") return true;
+      setError(authErrorMessage(e));
+      return false;
+    }
+  }, []);
+
+  const resendVerification = useCallback(async () => {
+    setError(null);
+    if (!auth.currentUser) return false;
+    try {
+      await sendEmailVerification(auth.currentUser);
+      return true;
+    } catch (e: any) {
+      setError(authErrorMessage(e));
+      return false;
+    }
+  }, []);
+
+  /** After the user taps the link in the email: reload the user, refresh the token (rules read email_verified from it), re-check access. */
+  const refreshVerification = useCallback(async () => {
+    const user = auth.currentUser;
+    if (!user) return;
+    setError(null);
+    try {
+      await reload(user);
+      if (user.emailVerified) {
+        await user.getIdToken(true);
+        await resolveIdentity(user);
+      }
+    } catch (e: any) {
+      setError(authErrorMessage(e));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const clearError = useCallback(() => setError(null), []);
 
   const signOut = useCallback(async () => {
     unsubProfile.current?.();
@@ -190,10 +315,68 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo<AuthCtx>(
-    () => ({ status, profile, googleEmail, error, signInWithGoogle, signOut, canSignIn: !!request }),
-    [status, profile, googleEmail, error, signInWithGoogle, signOut, request]
+    () => ({
+      status,
+      profile,
+      googleEmail,
+      error,
+      signInWithGoogle,
+      signUpWithEmail,
+      signInWithEmail,
+      sendPasswordReset,
+      resendVerification,
+      refreshVerification,
+      clearError,
+      signOut,
+      canSignIn: !!promptGoogle,
+    }),
+    [status, profile, googleEmail, error, signInWithGoogle, signUpWithEmail, signInWithEmail, sendPasswordReset, resendVerification, refreshVerification, clearError, signOut, promptGoogle]
   );
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  return (
+    <Ctx.Provider value={value}>
+      {hasGoogleClientId ? (
+        <GoogleSignInRequest
+          onError={handleGoogleError}
+          onPromptReady={handlePromptReady}
+          onSuccess={handleGoogleSuccess}
+        />
+      ) : null}
+      {children}
+    </Ctx.Provider>
+  );
+}
+
+function GoogleSignInRequest({
+  onError,
+  onPromptReady,
+  onSuccess,
+}: {
+  onError: (message: string) => void;
+  onPromptReady: (prompt: (() => Promise<void>) | null) => void;
+  onSuccess: (idToken: string) => void;
+}) {
+  const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
+    webClientId: googleClientIds.web || undefined,
+    androidClientId: googleClientIds.android || undefined,
+    iosClientId: googleClientIds.ios || undefined,
+  });
+
+  useEffect(() => {
+    if (response?.type === "success") {
+      onSuccess(response.params.id_token);
+    } else if (response?.type === "error") {
+      onError(response.error?.message ?? "Google sign-in failed.");
+    }
+  }, [response, onError, onSuccess]);
+
+  useEffect(() => {
+    onPromptReady(request ? async () => {
+      await promptAsync();
+    } : null);
+    return () => onPromptReady(null);
+  }, [request, promptAsync, onPromptReady]);
+
+  return null;
 }
 
 export function useAuth() {

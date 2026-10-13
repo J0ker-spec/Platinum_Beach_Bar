@@ -1,3 +1,4 @@
+import { useAuth } from "@/src/auth/AuthProvider";
 import { findEmployee, fullName } from "@/src/data";
 import { useStore } from "@/src/store";
 import { APP_NAME, colors, type } from "@/src/theme";
@@ -10,6 +11,7 @@ import { Pressable, Text, View } from "react-native";
 export default function Profile() {
   const router = useRouter();
   const { userId, signOut, setSnack } = useStore();
+  const { signOut: authSignOut } = useAuth();
   const me = findEmployee(userId ?? "EMP-0001")!;
   const [signOutOpen, setSignOutOpen] = useState(false);
 
@@ -73,6 +75,7 @@ export default function Profile() {
         onPrimary={() => {
           setSignOutOpen(false);
           signOut();
+          void authSignOut(); // also end the real Firebase session
           router.replace("/(auth)/login");
         }}
       />

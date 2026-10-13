@@ -161,6 +161,9 @@ export function TextField({
   editable = true,
   right,
   keyboardType,
+  autoCapitalize = "none",
+  autoComplete,
+  onSubmitEditing,
 }: {
   label: string;
   value: string;
@@ -172,6 +175,9 @@ export function TextField({
   editable?: boolean;
   right?: React.ReactNode;
   keyboardType?: "email-address" | "phone-pad" | "default";
+  autoCapitalize?: "none" | "words" | "sentences";
+  autoComplete?: React.ComponentProps<typeof TextInput>["autoComplete"];
+  onSubmitEditing?: () => void;
 }) {
   return (
     <View style={{ gap: 6 }}>
@@ -191,7 +197,10 @@ export function TextField({
           secureTextEntry={secure}
           editable={editable}
           keyboardType={keyboardType}
-          autoCapitalize="none"
+          autoCapitalize={autoCapitalize}
+          autoComplete={autoComplete}
+          autoCorrect={false}
+          onSubmitEditing={onSubmitEditing}
           style={[styles.input, { color: editable ? colors.text : colors.textSecondary }]}
         />
         {right}
