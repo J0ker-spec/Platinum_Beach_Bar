@@ -32,7 +32,7 @@ export function AuthShell({ title, subtitle, children }: { title: string; subtit
           </View>
           <View style={{ height: spacing.md }} />
           <Text style={[type.hero, { color: colors.onPrimary }]}>{title}</Text>
-          <Text style={[type.body, { color: "rgba(255,255,255,0.82)" }]}>{subtitle}</Text>
+          <Text style={[type.body, { color: "rgba(7,22,41,0.82)" }]}>{subtitle}</Text>
         </View>
         <View
           style={[

@@ -26,24 +26,28 @@ export default function EmployeeForm() {
     title: !title.trim() ? "Job title is required" : undefined,
   };
 
-  const save = () => {
+  const save = async () => {
     setSubmitted(true);
     if (errors.name || errors.email || errors.title) return;
     const [first, ...rest] = name.trim().split(/\s+/);
     const last = rest.join(" ");
-    upsertEmployee({
-      id: existing?.id ?? nextId,
-      firstName: first,
-      lastName: last,
-      email,
-      phone,
-      title,
-      status,
-      initials: `${first[0] ?? ""}${last[0] ?? ""}`.toUpperCase(),
-      accent: existing?.accent ?? colors.primary,
-    });
-    setSnack({ message: existing ? "Employee details saved" : "Employee added", tone: "success" });
-    router.back();
+    try {
+      await upsertEmployee({
+        id: existing?.id ?? nextId,
+        firstName: first,
+        lastName: last,
+        email,
+        phone,
+        title,
+        status,
+        initials: `${first[0] ?? ""}${last[0] ?? ""}`.toUpperCase(),
+        accent: existing?.accent ?? colors.primary,
+      });
+      setSnack({ message: existing ? "Employee details saved" : "Employee added", tone: "success" });
+      router.back();
+    } catch {
+      setSnack({ message: "Couldn't save the employee. Try again.", tone: "warning" });
+    }
   };
 
   return (

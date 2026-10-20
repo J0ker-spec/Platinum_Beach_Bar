@@ -9,7 +9,7 @@ import { Pressable, Text, View } from "react-native";
 
 export default function AnnouncementForm() {
   const router = useRouter();
-  const { employees, announcements, publishAnnouncement, saveAnnouncementDraft, userId } = useStore();
+  const { employees, announcements, publishAnnouncement, saveAnnouncementDraft, userId, setSnack } = useStore();
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [priority, setPriority] = useState<"Normal" | "Important">("Normal");
@@ -20,11 +20,15 @@ export default function AnnouncementForm() {
   const [preview, setPreview] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [discard, setDiscard] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
 
   const staff = employees.filter((e) => !e.isAdmin && e.status === "Active" && fullName(e).toLowerCase().includes(query.toLowerCase()));
   const titleError = submitted && !title.trim() ? "Title is required" : undefined;
   const bodyError = submitted && !body.trim() ? "Message is required" : undefined;
-  const valid = !!title.trim() && !!body.trim();
+  const hasAudience = audience !== "Selected employees" || picked.length > 0;
+  const audienceError = submitted && !hasAudience ? "Select at least one employee" : undefined;
+  const valid = !!title.trim() && !!body.trim() && hasAudience;
   const audienceLabel = audience === "All employees" ? "All employees" : `${picked.length} selected`;
   const dirty = !!title || !!body;
   const publisher = employees.find((e) => e.id === userId);
@@ -89,6 +93,7 @@ export default function AnnouncementForm() {
         </View>
         {audience === "Selected employees" && (
           <View style={{ gap: 8 }}>
+            {audienceError ? <Text style={[type.meta, { color: colors.error }]}>{audienceError}</Text> : null}
             <SearchField value={query} onChangeText={setQuery} placeholder="Search employees" />
             {staff.map((e) => {
               const on = picked.includes(e.id);
@@ -96,7 +101,7 @@ export default function AnnouncementForm() {
                 <Pressable
                   key={e.id}
                   onPress={() => setPicked((p) => (on ? p.filter((x) => x !== e.id) : [...p, e.id]))}
-                  style={{ flexDirection: "row", gap: 12, alignItems: "center", padding: 10, borderRadius: 14, borderWidth: 1, borderColor: on ? colors.primary : colors.border, backgroundColor: "#fff" }}
+                  style={{ flexDirection: "row", gap: 12, alignItems: "center", padding: 10, borderRadius: 14, borderWidth: 1, borderColor: on ? colors.primary : colors.border, backgroundColor: colors.card }}
                 >
                   <Avatar initials={e.initials} color={e.accent} size={34} />
                   <Text style={[type.body, { color: colors.text, flex: 1 }]}>{fullName(e)}</Text>
@@ -108,17 +113,26 @@ export default function AnnouncementForm() {
         )}
 
         <Button label="Preview" variant="secondary" onPress={() => guard(() => setPreview(true))} />
-        <Button label="Publish" icon={Megaphone} onPress={() => guard(() => setConfirm(true))} />
+        <Button label="Publish" icon={Megaphone} loading={publishing} disabled={publishing} onPress={() => guard(() => setConfirm(true))} />
         <Button
           label="Save draft"
           variant="ghost"
-          onPress={() =>
-            guard(() => {
-              const item = build("Draft");
-              saveAnnouncementDraft(item);
+          loading={savingDraft}
+          disabled={savingDraft || publishing}
+          onPress={async () => {
+            setSubmitted(true);
+            if (!valid || savingDraft) return;
+            setSavingDraft(true);
+            try {
+              await saveAnnouncementDraft(build("Draft"));
               router.back();
-            })
-          }
+            } catch (error) {
+              const detail = error instanceof Error ? error.message : "Try again.";
+              setSnack({ message: `Couldn't save the draft: ${detail}`, tone: "warning" });
+            } finally {
+              setSavingDraft(false);
+            }
+          }}
         />
       </View>
 
@@ -130,10 +144,19 @@ export default function AnnouncementForm() {
         primary="Publish"
         secondary="Cancel"
         onSecondary={() => setConfirm(false)}
-        onPrimary={() => {
+        onPrimary={async () => {
+          if (publishing) return;
           setConfirm(false);
-          publishAnnouncement(build("Published"));
-          router.back();
+          setPublishing(true);
+          try {
+            await publishAnnouncement(build("Published"));
+            router.back();
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : "Unknown error";
+            setSnack({ message: `Couldn't publish the announcement: ${detail}`, tone: "warning" });
+          } finally {
+            setPublishing(false);
+          }
         }}
       />
       <Dialog

@@ -28,6 +28,7 @@ export type Employee = {
   initials: string;
   accent: string;
   isAdmin?: boolean;
+  role?: Role;
 };
 
 export type Shift = {
@@ -41,6 +42,12 @@ export type Shift = {
   location: string;
   notes?: string;
   status: ShiftStatus;
+  /** Epoch milliseconds of the scheduled start (from Firestore). Used to decide swap eligibility. */
+  startAt?: number;
+  /** Epoch milliseconds of the scheduled end (from Firestore). */
+  endAt?: number;
+  revision?: number;
+  changedAfterPublish?: boolean;
 };
 
 export type AttendanceRecord = {
@@ -52,6 +59,8 @@ export type AttendanceRecord = {
   scheduledEnd: string;
   clockIn?: string;
   clockOut?: string;
+  clockInAt?: number;
+  clockOutAt?: number;
   status: AttendanceStatus;
   notes?: string;
 };
@@ -61,8 +70,15 @@ export type SwapRequest = {
   fromEmployeeId: string;
   toEmployeeId: string;
   shiftId: string;
+  shiftDate?: string;
+  shiftStartAt?: number;
+  shiftEndAt?: number;
+  shiftLabel?: string;
+  /** The colleague's shift they nominate to give in return (two-way swap); undefined = one-way. */
+  receivedShiftId?: string;
   submitted: string;
   reason?: string;
+  decisionReason?: string;
   status: SwapStatus;
 };
 
@@ -86,9 +102,10 @@ export type AppNotification = {
   title: string;
   body: string;
   time: string;
-  type: "schedule" | "swap" | "announcement" | "attendance" | "reminder";
+  type: "schedule" | "swap" | "swap_request" | "swap_update" | "announcement" | "attendance" | "reminder";
   unread: boolean;
-  href?: string;
+  href?: "/(employee)/swap-inbox" | "/(employee)/(tabs)/schedule" | "/(employee)/(tabs)/updates";
+  refId?: string;
 };
 
 /** A verified sign-up waiting for an administrator to approve it and assign a role. */

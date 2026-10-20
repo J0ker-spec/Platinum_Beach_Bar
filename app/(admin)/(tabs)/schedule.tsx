@@ -1,23 +1,54 @@
-import { addDays, formatRange, isoDate, weekDates } from "@/src/dates";
+import { addDays, formatRange, weekDates } from "@/src/dates";
+import { workplaceToday } from "@/src/lib/time";
 import { useStore } from "@/src/store";
 import { colors, type } from "@/src/theme";
-import { Button, Card, Dialog, EmptyState, Screen, StatusBadge } from "@/src/ui";
+import { Button, Card, Dialog, EmptyState, Screen, Sheet, StatusBadge } from "@/src/ui";
 import { ShiftCard, WeekStrip, badgeTone } from "@/src/widgets";
-import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react-native";
+import { draftShiftsBetween, fullName } from "@/src/data";
+import { CalendarDays, ChevronLeft, ChevronRight, Pencil, Trash2 } from "lucide-react-native";
 import { useRouter } from "expo-router";
-import { useMemo, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import { Pressable, ScrollView, Text, View } from "react-native";
 
 export default function AdminSchedule() {
   const router = useRouter();
-  const { shifts, scheduleStatus, publishSchedule, getEmployee: findEmployee } = useStore();
-  const [anchor, setAnchor] = useState(new Date());
+  const { shifts, publishSchedule, deleteShift, setSnack, workplaceTimezone, getEmployee: findEmployee } = useStore();
+  const today = workplaceToday(workplaceTimezone);
+  const [anchor, setAnchor] = useState(() => new Date(`${today}T12:00:00`));
   const dates = weekDates(anchor);
-  const [selected, setSelected] = useState(isoDate());
+  const [selected, setSelected] = useState(today);
   const [publishOpen, setPublishOpen] = useState(false);
-  const [unsaved, setUnsaved] = useState(false);
+  const [draftInboxOpen, setDraftInboxOpen] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [publishingDraft, setPublishingDraft] = useState(false);
+  const [openShift, setOpenShift] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const dayShifts = shifts.filter((s) => s.date === selected);
-  const coverage = dates.map((date) => ({ date, count: shifts.filter((s) => s.date === date).length }));
+  const draftShifts = draftShiftsBetween(shifts, dates[0], dates[6]);
+  const allDrafts = shifts
+    .filter((shift) => shift.status === "Draft")
+    .sort((a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start));
+  const scheduleStatus = draftShifts.length
+    ? "Draft"
+    : shifts.some((shift) => dates.includes(shift.date) && (shift.status === "Published" || shift.status === "Updated"))
+      ? "Published"
+      : "Draft";
+  const coverage = dates.map((date) => ({
+    date,
+    count: shifts.filter((shift) => shift.date === date && shift.status !== "Cancelled").length,
+  }));
+  const viewShift = shifts.find((s) => s.id === openShift);
+  useEffect(() => {
+    setAnchor(new Date(`${today}T12:00:00`));
+    setSelected(today);
+  }, [today]);
+  const moveWeek = (offset: number) => {
+    const nextAnchor = addDays(anchor, offset);
+    const nextDates = weekDates(nextAnchor);
+    const selectedIndex = dates.indexOf(selected);
+    setAnchor(nextAnchor);
+    setSelected(selectedIndex >= 0 ? nextDates[selectedIndex] : nextDates[0]);
+  };
 
   const titleRange = useMemo(() => formatRange(dates[0], dates[6]), [dates]);
 
@@ -31,19 +62,21 @@ export default function AdminSchedule() {
         <StatusBadge label={scheduleStatus} tone={badgeTone(scheduleStatus)} />
       </View>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginVertical: 12 }}>
-        <Pressable onPress={() => setAnchor(addDays(anchor, -7))} accessibilityLabel="Previous week">
+        <Pressable onPress={() => moveWeek(-7)} accessibilityLabel="Previous week">
           <ChevronLeft color={colors.text} />
         </Pressable>
         <View style={{ flex: 1 }}>
           <WeekStrip dates={dates} selected={selected} marked={shifts.map((s) => s.date)} onSelect={setSelected} />
         </View>
-        <Pressable onPress={() => setAnchor(addDays(anchor, 7))} accessibilityLabel="Next week">
+        <Pressable onPress={() => moveWeek(7)} accessibilityLabel="Next week">
           <ChevronRight color={colors.text} />
         </Pressable>
       </View>
       <Button label="Create shift" onPress={() => router.push("/(admin)/shift-form")} />
       <View style={{ height: 10 }} />
-      <Button label="Publish schedule" variant="secondary" onPress={() => setPublishOpen(true)} />
+      <Button label={`Review week to publish (${draftShifts.length} drafts)`} variant="secondary" loading={publishing} disabled={publishing} onPress={() => setPublishOpen(true)} />
+      <View style={{ height: 8 }} />
+      <Button label={`Review all saved drafts (${allDrafts.length})`} variant="secondary" onPress={() => setDraftInboxOpen(true)} />
 
       <Text style={[type.section, { color: colors.text, marginTop: 18, marginBottom: 8 }]}>Weekly coverage</Text>
       <Card>
@@ -68,41 +101,156 @@ export default function AdminSchedule() {
       <View style={{ marginTop: 16, gap: 10 }}>
         {dayShifts.length ? (
           dayShifts.map((shift) => (
-            <ShiftCard key={shift.id} shift={shift} employee={findEmployee(shift.employeeId)} onPress={() => router.push("/(admin)/shift-form")} />
+            <ShiftCard key={shift.id} shift={shift} employee={findEmployee(shift.employeeId)} onPress={() => setOpenShift(shift.id)} />
           ))
         ) : (
           <EmptyState icon={CalendarDays} title="No shifts on this date" body="Create a shift to fill coverage." action="Create shift" onAction={() => router.push("/(admin)/shift-form")} />
         )}
       </View>
 
-      <Card style={{ marginTop: 16, backgroundColor: colors.warningSoft }}>
-        <Text style={[type.card, { color: colors.text }]}>Incomplete planning</Text>
-        <Text style={[type.meta, { color: colors.textSecondary }]}>Friday still has a draft shift. Review before publishing.</Text>
-        <Button label="Leave editor" variant="ghost" onPress={() => setUnsaved(true)} />
-      </Card>
+      <Sheet visible={publishOpen} onClose={() => { if (!publishing) setPublishOpen(false); }}>
+        <Text style={[type.section, { color: colors.text }]}>Review {titleRange}</Text>
+        <Text style={[type.meta, { color: colors.textSecondary }]}>
+          {draftShifts.length
+            ? `Only these ${draftShifts.length} draft shifts will be published.`
+            : "There are no draft shifts in this week."}
+        </Text>
+        <ScrollView style={{ maxHeight: 320 }} contentContainerStyle={{ gap: 8 }}>
+          {draftShifts.map((shift) => (
+            <Card key={shift.id} style={{ padding: 12 }}>
+              <Text style={[type.card, { color: colors.text }]}>
+                {formatRange(shift.date, shift.date)} · {shift.start}–{shift.end}
+              </Text>
+              <Text style={[type.meta, { color: colors.textSecondary }]}>
+                {findEmployee(shift.employeeId) ? fullName(findEmployee(shift.employeeId)!) : shift.employeeId} · {shift.label}
+              </Text>
+            </Card>
+          ))}
+        </ScrollView>
+        <Button
+          label="Confirm and publish these shifts"
+          loading={publishing}
+          disabled={publishing || !draftShifts.length}
+          onPress={async () => {
+            if (publishing || !draftShifts.length) return;
+            setPublishing(true);
+            try {
+              await publishSchedule(
+                dates[0],
+                dates[6],
+                draftShifts.map(({ id, revision }) => ({ id, revision }))
+              );
+              setPublishOpen(false);
+            } catch (error) {
+              const detail = error instanceof Error ? error.message : "Unknown error";
+              setSnack({ message: `Couldn't publish the schedule: ${detail}`, tone: "warning" });
+            } finally {
+              setPublishing(false);
+            }
+          }}
+        />
+        <Button label="Cancel" variant="ghost" disabled={publishing} onPress={() => setPublishOpen(false)} />
+      </Sheet>
+      <Sheet visible={draftInboxOpen} onClose={() => setDraftInboxOpen(false)}>
+        <Text style={[type.section, { color: colors.text }]}>All saved drafts</Text>
+        <Text style={[type.meta, { color: colors.textSecondary }]}>
+          Open a draft to edit, delete, or publish it, including drafts from past weeks.
+        </Text>
+        <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={{ gap: 8 }}>
+          {allDrafts.length ? allDrafts.map((shift) => {
+            const employee = findEmployee(shift.employeeId);
+            return (
+              <Card
+                key={shift.id}
+                onPress={() => {
+                  setOpenShift(shift.id);
+                  setDraftInboxOpen(false);
+                }}
+                style={{ padding: 12 }}
+              >
+                <Text style={[type.card, { color: colors.text }]}>
+                  {formatRange(shift.date, shift.date)} · {shift.start}–{shift.end}
+                </Text>
+                <Text style={[type.meta, { color: colors.textSecondary }]}>
+                  {employee ? fullName(employee) : shift.employeeId} · {shift.label}
+                </Text>
+              </Card>
+            );
+          }) : (
+            <Text style={[type.meta, { color: colors.muted, paddingVertical: 16 }]}>There are no saved draft shifts.</Text>
+          )}
+        </ScrollView>
+        <Button label="Close" variant="ghost" onPress={() => setDraftInboxOpen(false)} />
+      </Sheet>
+      <Sheet visible={!!viewShift} onClose={() => setOpenShift(null)}>
+        {viewShift ? (
+          <>
+            <Text style={[type.section, { color: colors.text }]}>{formatRange(viewShift.date, viewShift.date)}</Text>
+            <Text style={[type.title, { color: colors.text }]}>{viewShift.start} – {viewShift.end}</Text>
+            <Text style={[type.body, { color: colors.textSecondary }]}>{viewShift.label} · {findEmployee(viewShift.employeeId) ? fullName(findEmployee(viewShift.employeeId)) : viewShift.employeeId}</Text>
+            <StatusBadge label={viewShift.status} tone={badgeTone(viewShift.status)} />
+            {viewShift.status === "Draft" ? (
+              <Button
+                label="Publish this draft"
+                loading={publishingDraft}
+                disabled={publishingDraft}
+                onPress={async () => {
+                  setPublishingDraft(true);
+                  try {
+                    const week = weekDates(new Date(`${viewShift.date}T12:00:00`));
+                    await publishSchedule(week[0], week[6], [{ id: viewShift.id, revision: viewShift.revision }]);
+                    setOpenShift(null);
+                  } catch (error) {
+                    const detail = error instanceof Error ? error.message : "Try again.";
+                    setSnack({ message: `Couldn't publish the draft: ${detail}`, tone: "warning" });
+                  } finally {
+                    setPublishingDraft(false);
+                  }
+                }}
+              />
+            ) : null}
+            {viewShift.status !== "Cancelled" ? (
+              <>
+                <Button
+                  label="Edit shift"
+                  icon={Pencil}
+                  variant="secondary"
+                  onPress={() => {
+                    setOpenShift(null);
+                    router.push({ pathname: "/(admin)/shift-form", params: { shiftId: viewShift.id } });
+                  }}
+                />
+                <Button label="Delete shift" variant="danger" onPress={() => setConfirmDelete(true)} />
+              </>
+            ) : null}
+            <Button label="Close" variant="ghost" onPress={() => setOpenShift(null)} />
+          </>
+        ) : null}
+      </Sheet>
 
       <Dialog
-        visible={publishOpen}
-        icon={CalendarDays}
-        title="Publish schedule?"
-        body={`The week of ${titleRange} will become visible to employees.`}
-        primary="Publish schedule"
+        visible={confirmDelete}
+        tone="danger"
+        icon={Trash2}
+        title={viewShift?.status === "Draft" ? "Delete this draft shift?" : "Cancel this published shift?"}
+        body={viewShift?.status === "Draft"
+          ? "The draft will be permanently removed. Shifts with attendance records cannot be removed."
+          : "The shift will be cancelled for the employee. Its history will be retained."}
+        primary={viewShift?.status === "Draft" ? "Delete draft" : "Cancel shift"}
         secondary="Cancel"
-        onSecondary={() => setPublishOpen(false)}
-        onPrimary={() => {
-          setPublishOpen(false);
-          publishSchedule();
+        onSecondary={() => setConfirmDelete(false)}
+        onPrimary={async () => {
+          if (!viewShift) return;
+          try {
+            const result = await deleteShift(viewShift.id);
+            setSnack({ message: result === "deleted" ? "Draft shift deleted" : "Shift cancelled", tone: "success" });
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : "Try again.";
+            setSnack({ message: `Couldn't remove the shift: ${detail}`, tone: "warning" });
+          }
+          setConfirmDelete(false);
+          setOpenShift(null);
         }}
-      />
-      <Dialog
-        visible={unsaved}
-        tone="warning"
-        title="You have unsaved changes."
-        body="Continue editing this draft or discard the preview edits."
-        primary="Continue editing"
-        secondary="Discard changes"
-        onPrimary={() => setUnsaved(false)}
-        onSecondary={() => setUnsaved(false)}
       />
     </Screen>
   );

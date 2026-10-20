@@ -75,7 +75,7 @@ export function ShiftCard({
       onPress={onPress}
       style={
         highlight
-          ? { backgroundColor: colors.lavenderSurface, borderColor: "#DDD6FF" }
+          ? { backgroundColor: colors.lavenderSurface, borderColor: colors.border }
           : undefined
       }
     >
@@ -144,15 +144,15 @@ export function WeekStrip({
               borderColor: active ? colors.primary : colors.border,
             }}
           >
-            <Text style={[type.tiny, { color: active ? "#fff" : colors.muted }]}>{formatShortDay(date)}</Text>
-            <Text style={[type.card, { color: active ? "#fff" : colors.text, marginTop: 4 }]}>{Number(date.slice(8))}</Text>
+            <Text style={[type.tiny, { color: active ? colors.onPrimary : colors.muted }]}>{formatShortDay(date)}</Text>
+            <Text style={[type.card, { color: active ? colors.onPrimary : colors.text, marginTop: 4 }]}>{Number(date.slice(8))}</Text>
             <View
               style={{
                 width: 6,
                 height: 6,
                 borderRadius: 3,
                 marginTop: 6,
-                backgroundColor: marked.includes(date) ? (active ? "#fff" : colors.primary) : "transparent",
+                backgroundColor: marked.includes(date) ? (active ? colors.onPrimary : colors.primary) : "transparent",
               }}
             />
           </Pressable>

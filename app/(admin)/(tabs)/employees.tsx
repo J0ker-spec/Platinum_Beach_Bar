@@ -57,7 +57,7 @@ export default function Employees() {
           </View>
           {registrations.length > 0 ? (
             registrations.map((r) => (
-              <View key={r.id} style={{ backgroundColor: "#fff", borderRadius: 18, borderWidth: 1, borderColor: colors.border, padding: 14, gap: 10 }}>
+              <View key={r.id} style={{ backgroundColor: colors.card, borderRadius: 18, borderWidth: 1, borderColor: colors.border, padding: 14, gap: 10 }}>
                 <View>
                   <Text style={[type.card, { color: colors.text }]}>{r.name || r.email}</Text>
                   <Text style={[type.meta, { color: colors.textSecondary }]}>{r.email} · {r.createdAt}</Text>
@@ -114,7 +114,7 @@ export default function Employees() {
               <Pressable
                 key={person.id}
                 onPress={() => router.push({ pathname: "/(admin)/employee-detail", params: { id: person.id } })}
-                style={{ backgroundColor: "#fff", borderRadius: 18, borderWidth: 1, borderColor: colors.border, padding: 14, flexDirection: "row", gap: 12, alignItems: "center" }}
+                style={{ backgroundColor: colors.card, borderRadius: 18, borderWidth: 1, borderColor: colors.border, padding: 14, flexDirection: "row", gap: 12, alignItems: "center" }}
               >
                 <Avatar initials={person.initials} color={person.accent} />
                 <View style={{ flex: 1 }}>

@@ -1,5 +1,6 @@
-import { isoDate, nowTime } from "@/src/dates";
+import { nowTime } from "@/src/dates";
 import { parseQr } from "@/src/lib/qr";
+import { workplaceToday } from "@/src/lib/time";
 import { useStore } from "@/src/store";
 import { colors, type } from "@/src/theme";
 import { Button, Dialog, Screen, Sheet } from "@/src/ui";
@@ -13,13 +14,14 @@ type ScanState = "idle" | "confirm-in" | "confirm-out" | "success-in" | "success
 
 export default function Scan() {
   const router = useRouter();
-  const { clockedIn, clockIn, clockOut, shifts, userId } = useStore();
+  const { clockedIn, clockIn, clockOut, shifts, userId, workplaceTimezone } = useStore();
   const [permission, requestPermission] = useCameraPermissions();
   const proof = useRef<string | null>(null);
   const busy = useRef(false);
   const [state, setState] = useState<ScanState>("idle");
-  const time = nowTime();
-  const todayShift = shifts.find((s) => s.employeeId === (userId ?? "EMP-0001") && s.date === isoDate() && s.status === "Published");
+  const time = nowTime(workplaceTimezone);
+  const today = workplaceToday(workplaceTimezone);
+  const todayShift = userId ? shifts.find((s) => s.employeeId === userId && s.date === today && (s.status === "Published" || s.status === "Updated")) : undefined;
 
   const onScan = (value: string) => {
     if (busy.current || state !== "idle") return;
@@ -65,7 +67,7 @@ export default function Scan() {
           style={{
             width: 260,
             height: 260,
-            backgroundColor: "#111827",
+            backgroundColor: colors.background,
             borderRadius: 24,
             alignItems: "center",
             justifyContent: "center",

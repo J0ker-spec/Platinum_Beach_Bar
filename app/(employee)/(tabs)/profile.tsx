@@ -3,7 +3,7 @@ import { fullName } from "@/src/data";
 import { useStore } from "@/src/store";
 import { APP_NAME, colors, type } from "@/src/theme";
 import { Avatar, Card, Dialog, Screen, SettingRow, StatusBadge } from "@/src/ui";
-import { CircleHelp, Copy, Info, LogOut, Palette, UserRound, Bell } from "lucide-react-native";
+import { CircleHelp, Copy, Info, LogOut, Bell } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
@@ -56,9 +56,6 @@ export default function Profile() {
 
       <Card style={{ marginTop: 16 }}>
         <SettingRow icon={Bell} label="Notification preferences" onPress={() => router.push("/(employee)/notification-settings")} />
-        <SettingRow icon={Palette} label="Appearance" value="Light" />
-        <SettingRow icon={UserRound} label="Account information" />
-        <SettingRow icon={CircleHelp} label="Help and support" />
         <SettingRow icon={Info} label="About the app" value={APP_NAME} />
         <SettingRow icon={LogOut} label="Sign out" onPress={() => setSignOutOpen(true)} />
       </Card>

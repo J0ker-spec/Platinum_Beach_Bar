@@ -1,5 +1,5 @@
 import { useStore } from "@/src/store";
-import { BUSINESS_NAME, colors, type } from "@/src/theme";
+import { colors, type } from "@/src/theme";
 import { BackHeader, Button, Card, Dialog, Screen, Sheet, StatusBadge } from "@/src/ui";
 import { AlertTriangle, QrCode } from "lucide-react-native";
 import { useRouter } from "expo-router";
@@ -15,12 +15,12 @@ function QrCodeView({ size, payload }: { size: number; payload: string | null })
       </View>
     );
   }
-  return <QRCode value={payload} size={size} color={colors.text} backgroundColor="#fff" ecl="M" />;
+  return <QRCode value={payload} size={size} color={colors.onPrimary} backgroundColor="#FFFFFF" ecl="M" />;
 }
 
 export default function Qr() {
   const router = useRouter();
-  const { qrLabel, qrPayload, replaceQr, setSnack } = useStore();
+  const { qrLabel, qrPayload, replaceQr, setSnack, businessName } = useStore();
   const [big, setBig] = useState(false);
   const [confirm, setConfirm] = useState(false);
 
@@ -29,10 +29,10 @@ export default function Qr() {
       <BackHeader title="Workplace QR code" onBack={() => router.back()} />
       <Card style={{ alignItems: "center", gap: 10 }}>
         <StatusBadge label={qrPayload ? "Live code" : "Not created"} tone={qrPayload ? "success" : "neutral"} />
-        <View style={{ padding: 16, backgroundColor: "#fff", borderRadius: 16, borderWidth: 1, borderColor: colors.border }}>
+        <View style={{ padding: 16, backgroundColor: "#FFFFFF", borderRadius: 16, borderWidth: 1, borderColor: colors.border }}>
           <QrCodeView size={220} payload={qrPayload} />
         </View>
-        <Text style={[type.card, { color: colors.text }]}>{BUSINESS_NAME}</Text>
+        <Text style={[type.card, { color: colors.text }]}>{businessName}</Text>
         <Text style={[type.meta, { color: colors.textSecondary }]}>{qrLabel}</Text>
         <Text style={[type.body, { color: colors.textSecondary, textAlign: "center" }]}>
           Employees scan this code at the workplace to clock in and out.
@@ -54,7 +54,7 @@ export default function Qr() {
       <Sheet visible={big} onClose={() => setBig(false)}>
         <View style={{ alignItems: "center", gap: 12 }}>
           <QrCodeView size={260} payload={qrPayload} />
-          <Text style={[type.card, { color: colors.text }]}>{BUSINESS_NAME}</Text>
+          <Text style={[type.card, { color: colors.text }]}>{businessName}</Text>
           <Button label="Close" variant="secondary" onPress={() => setBig(false)} />
         </View>
       </Sheet>

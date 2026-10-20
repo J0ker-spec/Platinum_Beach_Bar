@@ -1,18 +1,17 @@
 import { useAuth } from "@/src/auth/AuthProvider";
 import { fullName } from "@/src/data";
 import { useStore } from "@/src/store";
-import { APP_NAME, BUSINESS_NAME, colors, type } from "@/src/theme";
+import { APP_NAME, colors, type } from "@/src/theme";
 import { Avatar, Card, Dialog, Screen, SettingRow } from "@/src/ui";
-import { ArrowLeftRight, Building2, CircleHelp, Info, LogOut, Megaphone, QrCode, UserPlus, UserRound, Bell } from "lucide-react-native";
+import { ArrowLeftRight, Building2, Info, LogOut, Megaphone, QrCode, UserPlus, Bell } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Text, View } from "react-native";
 
 export default function More() {
   const router = useRouter();
-  const { userId, signOut, setSnack, getEmployee: findEmployee, registrations, swaps } = useStore();
+  const { userId, signOut, getEmployee: findEmployee, registrations, swaps, businessName } = useStore();
   const { signOut: authSignOut } = useAuth();
-  const soon = (m: string) => () => setSnack({ message: m, tone: "info" });
   const me = findEmployee(userId ?? "ADM-0001")!;
   const [out, setOut] = useState(false);
   const pendingSwaps = swaps.filter((s) => s.status === "Awaiting approval");
@@ -24,7 +23,7 @@ export default function More() {
           <Avatar initials={me.initials} color={me.accent} size={56} />
           <View>
             <Text style={[type.card, { color: colors.text }]}>{fullName(me)}</Text>
-            <Text style={[type.meta, { color: colors.textSecondary }]}>{me.title} · {BUSINESS_NAME}</Text>
+            <Text style={[type.meta, { color: colors.textSecondary }]}>{me.title} · {businessName}</Text>
             <Text style={[type.tiny, { color: colors.muted }]}>{me.id}</Text>
           </View>
         </View>
@@ -47,9 +46,7 @@ export default function More() {
         <SettingRow icon={Building2} label="Business details" onPress={() => router.push("/(admin)/business")} />
       </Card>
       <Card style={{ marginTop: 16 }}>
-        <SettingRow icon={UserRound} label="Administrator profile" onPress={soon("Profile is a preview screen")} />
-        <SettingRow icon={Bell} label="Notification preferences" onPress={soon("Preferences updated (preview)")} />
-        <SettingRow icon={CircleHelp} label="Help and support" onPress={soon("Help centre is not part of this prototype")} />
+        <SettingRow icon={Bell} label="Notification preferences" onPress={() => router.push("/(employee)/notification-settings")} />
         <SettingRow icon={Info} label="About the app" value={APP_NAME} />
         <SettingRow icon={LogOut} label="Sign out" onPress={() => setOut(true)} />
       </Card>

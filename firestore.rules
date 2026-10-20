@@ -124,12 +124,13 @@ service cloud.firestore {
       allow delete: if false; // deactivate instead; IDs are never reused
     }
 
-    // Minimal colleague directory (name + title only) for swap pickers. No contact data.
+    // Minimal colleague directory (name, title, and role) for swap pickers. No contact data.
     match /directory/{employeeId} {
       allow read: if isActive();
       allow create, update: if isAdmin()
-        && onlyKeys(['displayName', 'title', 'status'])
-        && request.resource.data.status in ['active', 'deactivated'];
+        && onlyKeys(['displayName', 'title', 'status', 'role'])
+        && request.resource.data.status in ['active', 'deactivated']
+        && request.resource.data.role in ['employee', 'admin'];
       allow delete: if false;
     }
 
@@ -154,11 +155,23 @@ service cloud.firestore {
       allow read: if isActive();
       allow create, update: if isAdmin()
         && doc == 'main'
-        && onlyKeys(['businessName', 'timezone', 'clockInEarlyMinutes', 'clockInLateMinutes', 'updatedBy', 'updatedAt'])
+        && onlyKeys(['businessName', 'businessAddress', 'businessPhone', 'businessEmail', 'timezone', 'clockInEarlyMinutes', 'clockInLateMinutes', 'updatedBy', 'updatedAt'])
         && request.resource.data.clockInEarlyMinutes is int
         && request.resource.data.clockInEarlyMinutes >= 0 && request.resource.data.clockInEarlyMinutes <= 240
         && request.resource.data.clockInLateMinutes is int
         && request.resource.data.clockInLateMinutes >= 0 && request.resource.data.clockInLateMinutes <= 480
+        && (!('businessName' in request.resource.data)
+            || (request.resource.data.businessName is string
+                && request.resource.data.businessName.size() > 0
+                && request.resource.data.businessName.size() <= 120))
+        && (!('businessAddress' in request.resource.data)
+            || (request.resource.data.businessAddress is string && request.resource.data.businessAddress.size() <= 300))
+        && (!('businessPhone' in request.resource.data)
+            || (request.resource.data.businessPhone is string && request.resource.data.businessPhone.size() <= 32))
+        && (!('businessEmail' in request.resource.data)
+            || (request.resource.data.businessEmail is string && request.resource.data.businessEmail.size() <= 254))
+        && (!('timezone' in request.resource.data)
+            || (request.resource.data.timezone is string && request.resource.data.timezone.size() <= 64))
         && request.resource.data.updatedBy == myId()
         && request.resource.data.updatedAt == request.time;
       allow delete: if false;
@@ -188,8 +201,16 @@ service cloud.firestore {
       allow create: if isAdmin() && validShift() && request.resource.data.createdBy == myId();
       allow update: if isAdmin() && validShift()
         && request.resource.data.createdBy == resource.data.createdBy
-        && request.resource.data.revision == resource.data.revision + 1;
-      allow delete: if isAdmin() && resource.data.status == 'draft';
+        && request.resource.data.revision == resource.data.revision + 1
+        && (!exists(/databases/$(database)/documents/attendance/$(resource.data.employeeId + '_' + shiftId))
+            || (request.resource.data.employeeId == resource.data.employeeId
+                && request.resource.data.date == resource.data.date
+                && request.resource.data.startAt == resource.data.startAt
+                && request.resource.data.endAt == resource.data.endAt
+                && request.resource.data.breakMinutes == resource.data.breakMinutes));
+      allow delete: if isAdmin()
+        && resource.data.status == 'draft'
+        && !exists(/databases/$(database)/documents/attendance/$(resource.data.employeeId + '_' + shiftId));
       function validShift() {
         let d = request.resource.data;
         return d.keys().hasOnly(['employeeId', 'date', 'startAt', 'endAt', 'breakMinutes', 'label', 'notes',
@@ -275,9 +296,13 @@ service cloud.firestore {
       }
       function validAdminUpdate() {
         return auditPaired()
+          && changedOnly(['clockInAt', 'clockOutAt', 'reviewStatus', 'late', 'lastCorrectionId'])
           && request.resource.data.employeeId == resource.data.employeeId
           && request.resource.data.shiftId == resource.data.shiftId
-          && request.resource.data.reviewStatus in ['confirmed', 'pending_review', 'rejected'];
+          && request.resource.data.reviewStatus in ['confirmed', 'pending_review', 'rejected']
+          && (!('clockInAt' in request.resource.data) || request.resource.data.clockInAt is timestamp)
+          && (!('clockOutAt' in request.resource.data) || request.resource.data.clockOutAt is timestamp)
+          && request.resource.data.late is bool;
       }
       function validAdminCreate() {
         return auditPaired()
@@ -300,7 +325,7 @@ service cloud.firestore {
       allow read: if isAdmin() || (isActive() && (resource.data.fromEmployeeId == myId() || resource.data.toEmployeeId == myId()));
 
       allow create: if isActive()
-        && onlyKeys(['fromEmployeeId', 'toEmployeeId', 'shiftId', 'reason', 'status', 'createdAt', 'updatedAt'])
+        && onlyKeys(['fromEmployeeId', 'toEmployeeId', 'shiftId', 'shiftDate', 'shiftStartAt', 'shiftEndAt', 'shiftLabel', 'reason', 'status', 'createdAt', 'updatedAt'])
         && request.resource.data.fromEmployeeId == myId()
         && request.resource.data.toEmployeeId != myId()
         && request.resource.data.status == 'pending_peer'
@@ -309,14 +334,30 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/shifts/$(request.resource.data.shiftId)).data.employeeId == myId()
         && get(/databases/$(database)/documents/shifts/$(request.resource.data.shiftId)).data.status == 'published'
         && get(/databases/$(database)/documents/shifts/$(request.resource.data.shiftId)).data.startAt > request.time
+        && request.resource.data.shiftDate == get(/databases/$(database)/documents/shifts/$(request.resource.data.shiftId)).data.date
+        && request.resource.data.shiftStartAt == get(/databases/$(database)/documents/shifts/$(request.resource.data.shiftId)).data.startAt
+        && request.resource.data.shiftEndAt == get(/databases/$(database)/documents/shifts/$(request.resource.data.shiftId)).data.endAt
+        && request.resource.data.shiftLabel == get(/databases/$(database)/documents/shifts/$(request.resource.data.shiftId)).data.label
         && get(/databases/$(database)/documents/employees/$(request.resource.data.toEmployeeId)).data.status == 'active';
 
-      // Colleague accepts or declines.
+      // Colleague accepts or declines. When accepting they may nominate one of their OWN published,
+      // upcoming shifts to give in return (two-way swap); it must belong to them and not be the
+      // same shift being offered.
       allow update: if isMe(resource.data.toEmployeeId)
         && resource.data.status == 'pending_peer'
         && request.resource.data.status in ['pending_admin', 'declined']
-        && changedOnly(['status', 'updatedAt'])
-        && request.resource.data.updatedAt == request.time;
+        && changedOnly(['status', 'updatedAt', 'receivedShiftId'])
+        && request.resource.data.updatedAt == request.time
+        && (request.resource.data.status == 'declined'
+            || (get(/databases/$(database)/documents/shifts/$(resource.data.shiftId)).data.employeeId == resource.data.fromEmployeeId
+                && get(/databases/$(database)/documents/shifts/$(resource.data.shiftId)).data.status == 'published'
+                && get(/databases/$(database)/documents/shifts/$(resource.data.shiftId)).data.startAt > request.time
+                && (!('receivedShiftId' in request.resource.data)
+                    || request.resource.data.receivedShiftId == null
+                    || (request.resource.data.receivedShiftId != resource.data.shiftId
+                        && get(/databases/$(database)/documents/shifts/$(request.resource.data.receivedShiftId)).data.employeeId == myId()
+                        && get(/databases/$(database)/documents/shifts/$(request.resource.data.receivedShiftId)).data.status == 'published'
+                        && get(/databases/$(database)/documents/shifts/$(request.resource.data.receivedShiftId)).data.startAt > request.time))));
 
       // Requester withdraws.
       allow update: if isMe(resource.data.fromEmployeeId)
@@ -330,13 +371,31 @@ service cloud.firestore {
       // (so two concurrent approvals for one shift cannot both succeed).
       allow update: if isAdmin()
         && resource.data.status == 'pending_admin'
-        && changedOnly(['status', 'updatedAt', 'decidedBy'])
+        && changedOnly(['status', 'updatedAt', 'decidedBy', 'decisionReason'])
         && request.resource.data.decidedBy == myId()
         && request.resource.data.updatedAt == request.time
+        && (!('decisionReason' in request.resource.data)
+            || (request.resource.data.decisionReason is string && request.resource.data.decisionReason.size() <= 500))
         && (request.resource.data.status in ['rejected', 'declined']
             || (request.resource.data.status == 'approved'
                 && get(/databases/$(database)/documents/shifts/$(resource.data.shiftId)).data.employeeId == resource.data.fromEmployeeId
+                && get(/databases/$(database)/documents/shifts/$(resource.data.shiftId)).data.status == 'published'
+                && get(/databases/$(database)/documents/shifts/$(resource.data.shiftId)).data.startAt > request.time
+                && ((!('shiftDate' in resource.data)
+                     && !('shiftStartAt' in resource.data)
+                     && !('shiftEndAt' in resource.data)
+                     && !('shiftLabel' in resource.data))
+                    || (get(/databases/$(database)/documents/shifts/$(resource.data.shiftId)).data.date == resource.data.shiftDate
+                        && get(/databases/$(database)/documents/shifts/$(resource.data.shiftId)).data.startAt == resource.data.shiftStartAt
+                        && get(/databases/$(database)/documents/shifts/$(resource.data.shiftId)).data.endAt == resource.data.shiftEndAt
+                        && get(/databases/$(database)/documents/shifts/$(resource.data.shiftId)).data.label == resource.data.shiftLabel))
                 && getAfter(/databases/$(database)/documents/shifts/$(resource.data.shiftId)).data.employeeId == resource.data.toEmployeeId
+                && (!('receivedShiftId' in resource.data)
+                    || resource.data.receivedShiftId == null
+                    || (get(/databases/$(database)/documents/shifts/$(resource.data.receivedShiftId)).data.employeeId == resource.data.toEmployeeId
+                        && get(/databases/$(database)/documents/shifts/$(resource.data.receivedShiftId)).data.status == 'published'
+                        && get(/databases/$(database)/documents/shifts/$(resource.data.receivedShiftId)).data.startAt > request.time
+                        && getAfter(/databases/$(database)/documents/shifts/$(resource.data.receivedShiftId)).data.employeeId == resource.data.fromEmployeeId))
                 && get(/databases/$(database)/documents/employees/$(resource.data.toEmployeeId)).data.status == 'active'));
       allow delete: if false;
     }
@@ -382,10 +441,14 @@ service cloud.firestore {
       }
     }
 
-    match /pushTokens/{employeeId} {
-      allow read: if isAdmin() || isMe(employeeId);
+    match /employees/{employeeId}/notificationPreferences/{settingsId} {
+      allow read: if isMe(employeeId) || isAdmin();
       allow create, update: if isMe(employeeId)
-        && onlyKeys(['token', 'platform', 'updatedAt'])
+        && settingsId == 'current'
+        && onlyKeys(['schedule', 'announcements', 'swaps', 'updatedAt'])
+        && request.resource.data.schedule is bool
+        && request.resource.data.announcements is bool
+        && request.resource.data.swaps is bool
         && request.resource.data.updatedAt == request.time;
       allow delete: if isMe(employeeId) || isAdmin();
     }

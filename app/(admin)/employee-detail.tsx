@@ -96,12 +96,16 @@ export default function EmployeeDetail() {
         <Button
           label={person.status === "Active" ? "Deactivate employee" : "Reactivate employee"}
           variant="secondary"
-          onPress={() => {
+          onPress={async () => {
             setMenu(false);
             if (person.status === "Active") setDeactivate(true);
             else {
-              upsertEmployee({ ...person, status: "Active" });
-              setSnack({ message: "Employee reactivated", tone: "success" });
+              try {
+                await upsertEmployee({ ...person, status: "Active" });
+                setSnack({ message: "Employee reactivated", tone: "success" });
+              } catch {
+                setSnack({ message: "Couldn't reactivate the employee. Try again.", tone: "warning" });
+              }
             }
           }}
         />
@@ -109,7 +113,14 @@ export default function EmployeeDetail() {
           <Button
             label={person.isAdmin ? "Change to employee" : "Make admin"}
             variant="ghost"
-            onPress={() => { setMenu(false); void setEmployeeRole(person.id, person.isAdmin ? "employee" : "admin"); }}
+            onPress={async () => {
+              setMenu(false);
+              try {
+                await setEmployeeRole(person.id, person.isAdmin ? "employee" : "admin");
+              } catch {
+                setSnack({ message: "Couldn't change the role. Try again.", tone: "warning" });
+              }
+            }}
           />
         )}
         <Button label="Delete permanently" variant="danger" onPress={() => { setMenu(false); setRemove(1); }} />
@@ -125,10 +136,14 @@ export default function EmployeeDetail() {
         primary="Deactivate"
         secondary="Cancel"
         onSecondary={() => setDeactivate(false)}
-        onPrimary={() => {
-          upsertEmployee({ ...person, status: "Inactive" });
-          setDeactivate(false);
-          setSnack({ message: "Employee deactivated", tone: "success" });
+        onPrimary={async () => {
+          try {
+            await upsertEmployee({ ...person, status: "Inactive" });
+            setDeactivate(false);
+            setSnack({ message: "Employee deactivated", tone: "success" });
+          } catch {
+            setSnack({ message: "Couldn't deactivate the employee. Try again.", tone: "warning" });
+          }
         }}
       />
       <Dialog

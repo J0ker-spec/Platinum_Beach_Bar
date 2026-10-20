@@ -1,6 +1,6 @@
 import { fullName } from "@/src/data";
-import { isoDate } from "@/src/dates";
 import { useStore } from "@/src/store";
+import { workplaceToday } from "@/src/lib/time";
 import { colors, type } from "@/src/theme";
 import { Avatar, Button, EmptyState, FilterChip, Screen, SearchField, Sheet, StatusBadge, TextField } from "@/src/ui";
 import { StatCard, badgeTone } from "@/src/widgets";
@@ -9,7 +9,7 @@ import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
 export default function AdminAttendance() {
-  const { attendance, correctAttendance, getEmployee: findEmployee } = useStore();
+  const { attendance, shifts, correctAttendance, setSnack, workplaceTimezone, getEmployee: findEmployee } = useStore();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All");
   const [open, setOpen] = useState<string | null>(null);
@@ -17,7 +17,14 @@ export default function AdminAttendance() {
   const [clockIn, setClockIn] = useState("");
   const [clockOut, setClockOut] = useState("");
   const [correcting, setCorrecting] = useState(false);
-  const today = isoDate();
+  const [saving, setSaving] = useState(false);
+  const today = workplaceToday(workplaceTimezone);
+  const todayShifts = shifts.filter((shift) => shift.date === today && (shift.status === "Published" || shift.status === "Updated"));
+  const clockedIds = new Set(attendance
+    .filter((record) => record.date === today && record.clockIn && record.clockIn !== "—" && (!record.clockOut || record.clockOut === "—"))
+    .map((record) => record.employeeId));
+  const scheduledIds = new Set(todayShifts.map((shift) => shift.employeeId));
+  const notClockedIn = [...scheduledIds].filter((id) => !clockedIds.has(id)).length;
   const rows = attendance.filter((row) => {
     const employee = findEmployee(row.employeeId);
     const matches = `${fullName(employee!)} ${row.employeeId}`.toLowerCase().includes(query.toLowerCase());
@@ -30,10 +37,10 @@ export default function AdminAttendance() {
       <Text style={[type.title, { color: colors.text }]}>Attendance</Text>
       <Text style={[type.meta, { color: colors.textSecondary }]}>Reviewing {today}</Text>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10, marginVertical: 12 }}>
-        <StatCard label="Present" value={attendance.filter((a) => a.date === today && a.clockIn).length} icon={ClipboardList} />
+        <StatCard label="Present" value={attendance.filter((a) => a.date === today && a.clockIn && a.clockIn !== "—").length} icon={ClipboardList} />
         <StatCard label="Late" value={attendance.filter((a) => a.date === today && a.status === "Late").length} icon={ClipboardList} />
-        <StatCard label="Not in" value={1} icon={ClipboardList} />
-        <StatCard label="Missing out" value={attendance.filter((a) => a.status === "Incomplete").length} icon={ClipboardList} />
+        <StatCard label="Not in" value={notClockedIn} icon={ClipboardList} />
+        <StatCard label="Missing out" value={attendance.filter((a) => a.date === today && a.status === "Incomplete").length} icon={ClipboardList} />
       </View>
       <SearchField value={query} onChangeText={setQuery} placeholder="Search by employee" />
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginVertical: 12 }}>
@@ -55,7 +62,7 @@ export default function AdminAttendance() {
                   setReason("");
                   setCorrecting(false);
                 }}
-                style={{ backgroundColor: "#fff", borderRadius: 18, borderWidth: 1, borderColor: colors.border, padding: 14 }}
+                style={{ backgroundColor: colors.card, borderRadius: 18, borderWidth: 1, borderColor: colors.border, padding: 14 }}
               >
                 <View style={{ flexDirection: "row", gap: 10 }}>
                   <Avatar initials={employee.initials} color={employee.accent} />
@@ -91,10 +98,20 @@ export default function AdminAttendance() {
                 <TextField label="Reason (required)" value={reason} onChangeText={setReason} helper="Corrections should be recorded for accountability." />
                 <Button
                   label="Save correction"
-                  disabled={!reason}
-                  onPress={() => {
-                    correctAttendance(current.id, clockIn, clockOut, reason);
-                    setOpen(null);
+                  loading={saving}
+                  disabled={!reason.trim() || saving}
+                  onPress={async () => {
+                    if (saving) return;
+                    setSaving(true);
+                    try {
+                      await correctAttendance(current.id, clockIn, clockOut, reason);
+                      setOpen(null);
+                    } catch (error) {
+                      const detail = error instanceof Error ? error.message : "Try again.";
+                      setSnack({ message: `Couldn't save the correction: ${detail}`, tone: "warning" });
+                    } finally {
+                      setSaving(false);
+                    }
                   }}
                 />
               </>

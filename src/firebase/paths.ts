@@ -10,7 +10,6 @@ export const C = {
   swaps: "shiftSwapRequests",
   announcements: "announcements",
   notifications: "notifications",
-  pushTokens: "pushTokens",
   settings: "workplaceSettings",
   qr: "qrCredentials",
   audit: "auditLogs",

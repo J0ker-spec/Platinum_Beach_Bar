@@ -1,4 +1,4 @@
-import { isoDate } from "@/src/dates";
+import { workplaceToday } from "@/src/lib/time";
 import { useStore } from "@/src/store";
 import { colors, type } from "@/src/theme";
 import { EmptyState, FilterChip, Screen, Sheet, StatusBadge } from "@/src/ui";
@@ -10,10 +10,13 @@ import { Pressable, Text, View } from "react-native";
 
 export default function History() {
   const router = useRouter();
-  const { attendance, userId } = useStore();
+  const { attendance, userId, workplaceTimezone } = useStore();
+  const today = workplaceToday(workplaceTimezone);
   const [filter, setFilter] = useState("All");
   const [open, setOpen] = useState<string | null>(null);
-  const rows = attendance.filter((a) => a.employeeId === (userId ?? "EMP-0001") && (filter === "All" || a.status === filter));
+  const rows = attendance
+    .filter((a) => a.employeeId === (userId ?? "EMP-0001") && (filter === "All" || a.status === filter))
+    .sort((a, b) => (b.clockInAt ?? 0) - (a.clockInAt ?? 0));
   const current = rows.find((r) => r.id === open);
 
   return (
@@ -22,7 +25,7 @@ export default function History() {
         <Text style={[type.meta, { color: colors.primary }]}>Back</Text>
       </Pressable>
       <Text style={[type.title, { color: colors.text, marginTop: 8 }]}>Attendance history</Text>
-      <Text style={[type.meta, { color: colors.textSecondary }]}>Range · last 14 days through {isoDate()}</Text>
+      <Text style={[type.meta, { color: colors.textSecondary }]}>All attendance records through {today}</Text>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginVertical: 12 }}>
         {["All", "On time", "Late", "Incomplete", "Corrected"].map((item) => (
           <FilterChip key={item} label={item} active={filter === item} onPress={() => setFilter(item)} />
@@ -35,10 +38,10 @@ export default function History() {
               key={row.id}
               onPress={() => setOpen(row.id)}
               style={{
-                backgroundColor: "#fff",
+                backgroundColor: colors.card,
                 borderRadius: 18,
                 borderWidth: 1,
-                borderColor: row.status === "Incomplete" ? "#F3E0B8" : colors.border,
+                borderColor: row.status === "Incomplete" ? colors.warning : colors.border,
                 padding: 14,
               }}
             >

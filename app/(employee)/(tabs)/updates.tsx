@@ -8,15 +8,21 @@ import { Pressable, Text, View } from "react-native";
 
 export default function Updates() {
   const router = useRouter();
-  const { announcements, notifications, markNotificationsRead } = useStore();
+  const { announcements, notifications, markNotificationsRead, notificationPreferences: preferences } = useStore();
   const [tab, setTab] = useState("Announcements");
+  const visibleNotifications = notifications.filter((item) => {
+    if (item.type === "announcement") return preferences.announcements;
+    if (item.type === "swap_request" || item.type === "swap_update" || item.type === "swap") return preferences.swaps;
+    if (item.type === "schedule") return preferences.schedule;
+    return true;
+  });
   const published = announcements.filter((a) => a.status === "Published");
-  const unreadCount = notifications.filter((n) => n.unread).length;
+  const unreadCount = visibleNotifications.filter((n) => n.unread).length;
 
   return (
     <Screen scroll>
       <Text style={[type.title, { color: colors.text }]}>Updates</Text>
-      <Text style={[type.meta, { color: colors.textSecondary }]}>Announcements and work reminders</Text>
+      <Text style={[type.meta, { color: colors.textSecondary }]}>Announcements and workplace updates</Text>
       {unreadCount ? (
         <Text style={[type.tiny, { color: colors.primary, marginTop: 6 }]}>{unreadCount} unread</Text>
       ) : null}
@@ -44,14 +50,16 @@ export default function Updates() {
         ) : (
           <EmptyState icon={Megaphone} title="No announcements yet" body="Official workplace notices will appear here." />
         )
-      ) : notifications.length ? (
+      ) : visibleNotifications.length ? (
         <View>
           <Pressable onPress={markNotificationsRead}>
             <Text style={[type.meta, { color: colors.primary, marginBottom: 10 }]}>Mark all as read</Text>
           </Pressable>
-          {notifications.map((item) => (
-            <View
+          {visibleNotifications.map((item) => (
+            <Pressable
               key={item.id}
+              accessibilityRole={item.href ? "button" : undefined}
+              onPress={item.href ? () => router.push(item.href!) : undefined}
               style={{
                 flexDirection: "row",
                 gap: 12,
@@ -77,11 +85,15 @@ export default function Updates() {
                 <Text style={[type.meta, { color: colors.textSecondary }]}>{item.body}</Text>
                 <Text style={[type.tiny, { color: colors.muted, marginTop: 4 }]}>{item.time}</Text>
               </View>
-            </View>
+            </Pressable>
           ))}
         </View>
       ) : (
-        <EmptyState icon={Bell} title="No new notifications" body="Schedule changes and reminders will show up here." />
+        <EmptyState
+          icon={Bell}
+          title={notifications.length ? "No notifications match your preferences" : "No new notifications"}
+          body={notifications.length ? "Adjust notification preferences to show more updates." : "Schedule and shift-swap updates will show up here."}
+        />
       )}
     </Screen>
   );

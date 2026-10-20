@@ -1,7 +1,8 @@
 import { fullName } from "@/src/data";
-import { greeting, isoDate, todayLabel } from "@/src/dates";
+import { greeting, todayLabel } from "@/src/dates";
+import { workplaceToday } from "@/src/lib/time";
 import { useStore } from "@/src/store";
-import { BUSINESS_NAME, colors, type } from "@/src/theme";
+import { colors, type } from "@/src/theme";
 import { Button, Card, Screen, SectionHeader, StatusBadge } from "@/src/ui";
 import { ActionTile, HeaderRow, ShiftCard, badgeTone } from "@/src/widgets";
 import { ArrowLeftRight, CalendarDays, Clock3, Megaphone } from "lucide-react-native";
@@ -10,21 +11,26 @@ import { Text, View } from "react-native";
 
 export default function EmployeeHome() {
   const router = useRouter();
-  const { userId, shifts, announcements, notifications, clockedIn, getEmployee: findEmployee } = useStore();
-  const me = findEmployee(userId ?? "EMP-0001")!;
-  const today = isoDate();
+  const { userId, shifts, announcements, notifications, swaps, clockedIn, workplaceTimezone, businessName, getEmployee: findEmployee } = useStore();
+  const me = findEmployee(userId ?? "");
+  if (!me) return <Screen><Text style={[type.meta, { color: colors.muted }]}>Loading…</Text></Screen>;
+  const today = workplaceToday(workplaceTimezone);
   const mine = shifts.filter((s) => s.employeeId === me.id && s.status !== "Cancelled");
-  const next = mine.find((s) => s.date === today) ?? mine.find((s) => s.date > today);
-  const upcoming = mine.filter((s) => s.id !== next?.id && s.date >= today).slice(0, 3);
+  const upcomingShifts = mine
+    .filter((shift) => typeof shift.endAt === "number" ? shift.endAt > Date.now() : shift.date >= today)
+    .sort((a, b) => (a.startAt ?? 0) - (b.startAt ?? 0));
+  const next = upcomingShifts[0];
+  const upcoming = upcomingShifts.filter((s) => s.id !== next?.id).slice(0, 3);
   const announcement = announcements.find((a) => a.status === "Published");
   const unread = notifications.some((n) => n.unread);
+  const pendingSwaps = swaps.filter((s) => s.toEmployeeId === me.id && s.status === "Pending coworker").length;
 
   return (
     <Screen scroll>
       <HeaderRow
-        greeting={greeting()}
+        greeting={greeting(workplaceTimezone)}
         name={me.firstName}
-        date={todayLabel()}
+        date={todayLabel(workplaceTimezone)}
         unread={unread}
         onBell={() => router.push("/(employee)/(tabs)/updates")}
       />
@@ -37,7 +43,7 @@ export default function EmployeeHome() {
             {next.start} – {next.end}
           </Text>
           <Text style={[type.body, { color: colors.textSecondary }]}>
-            {next.label} · {BUSINESS_NAME}
+            {next.label} · {businessName}
           </Text>
           <View style={{ flexDirection: "row", gap: 8, marginVertical: 10, alignItems: "center" }}>
             <StatusBadge label={next.status} tone={badgeTone(next.status)} />
@@ -58,11 +64,12 @@ export default function EmployeeHome() {
         <ActionTile icon={CalendarDays} label="View schedule" onPress={() => router.push("/(employee)/(tabs)/schedule")} />
         <ActionTile icon={Clock3} label="Clock in or out" onPress={() => router.push("/(employee)/scan")} />
         <ActionTile icon={ArrowLeftRight} label="Request a shift swap" onPress={() => router.push("/(employee)/swap")} />
+        <ActionTile icon={ArrowLeftRight} label={pendingSwaps ? `Respond to ${pendingSwaps} swap` : "Respond to swaps"} onPress={() => router.push("/(employee)/swap-inbox")} />
         <ActionTile icon={Megaphone} label="View announcements" onPress={() => router.push("/(employee)/(tabs)/updates")} />
       </View>
 
-      {next?.date === isoDate() ? (
-        <Card style={{ marginTop: 16, backgroundColor: colors.warningSoft, borderColor: "#F3E0B8" }}>
+      {next?.date === today ? (
+        <Card style={{ marginTop: 16, backgroundColor: colors.warningSoft, borderColor: colors.warning }}>
           <Text style={[type.meta, { color: colors.warning }]}>Reminder</Text>
           <Text style={[type.body, { color: colors.text }]}>Your next shift starts today at {next.start}.</Text>
         </Card>

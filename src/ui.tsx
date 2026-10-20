@@ -300,7 +300,7 @@ export function FilterChip({ label, active, onPress }: { label: string; active?:
         active ? { backgroundColor: colors.primary, borderColor: colors.primary } : null,
       ]}
     >
-      <Text style={[type.meta, { color: active ? "#fff" : colors.textSecondary }]}>{label}</Text>
+      <Text style={[type.meta, { color: active ? colors.onPrimary : colors.textSecondary }]}>{label}</Text>
     </Pressable>
   );
 }
@@ -320,7 +320,7 @@ export function Segmented({
         <Pressable
           key={option}
           onPress={() => onChange(option)}
-          style={[styles.segment, value === option && { backgroundColor: "#fff" }]}
+          style={[styles.segment, value === option && { backgroundColor: colors.card }]}
         >
           <Text style={[type.meta, { color: value === option ? colors.primary : colors.textSecondary, fontWeight: "700" }]}>
             {option}
@@ -434,7 +434,7 @@ export function Snackbar({ message, visible }: { message?: string | null; visibl
   if (!visible || !message) return null;
   return (
     <View style={styles.snack}>
-      <Text style={[type.meta, { color: "#fff" }]}>{message}</Text>
+      <Text style={[type.meta, { color: colors.onPrimary }]}>{message}</Text>
     </View>
   );
 }
@@ -501,7 +501,7 @@ export function useTimeout(ms: number, enabled: boolean) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
-  screenInner: { flex: 1, paddingTop: spacing.sm },
+  screenInner: { flex: 1, width: "100%", maxWidth: 720, alignSelf: "center", paddingTop: spacing.sm },
   text: { fontFamily: "System" },
   button: {
     minHeight: 48,
@@ -636,7 +636,7 @@ const styles = StyleSheet.create({
     left: 20,
     right: 20,
     bottom: 96,
-    backgroundColor: colors.text,
+    backgroundColor: colors.primary,
     borderRadius: 14,
     paddingVertical: 12,
     paddingHorizontal: 16,

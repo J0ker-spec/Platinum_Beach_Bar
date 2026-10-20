@@ -56,6 +56,7 @@ beforeEach(async () => {
     await shift("draft", "EMP-0002", "draft", 24);
     await shift("future-pub", "EMP-0002", "published", 48);
     await shift("jordan-pub", "EMP-0003", "published", 0.1);
+    await shift("jordan-future-pub", "EMP-0003", "published", 72);
   });
 });
 
@@ -120,7 +121,7 @@ describe("5-6 employee creation & unique IDs", () => {
       firstName: "N", lastName: "E", email, phone: "", title: "x", status: "active", role: "employee",
       createdBy: "EMP-0001", createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
     });
-    b.set(doc(db, "directory", id), { displayName: "N E", title: "x", status: "active" });
+    b.set(doc(db, "directory", id), { displayName: "N E", title: "x", status: "active", role: "employee" });
     b.set(doc(db, "employeeAuthorizations", email), {
       employeeId: id, claimedByUid: null, claimedAt: null, createdBy: "EMP-0001", createdAt: serverTimestamp(),
     });
@@ -151,6 +152,80 @@ describe("7 shifts", () => {
     await assertSucceeds(getDoc(doc(db, "shifts", "now-pub")));
     await assertFails(getDoc(doc(db, "shifts", "draft")));
     await assertFails(getDoc(doc(db, "shifts", "jordan-pub")));
+  });
+  it("admin can edit and publish a shift while advancing its revision", async () => {
+    const db = admin().firestore();
+    await assertSucceeds(updateDoc(doc(db, "shifts", "draft"), {
+      label: "Updated shift", status: "published", updatedBy: "EMP-0001",
+      updatedAt: serverTimestamp(), revision: 2,
+    }));
+    const saved = await getDoc(doc(db, "shifts", "draft"));
+    expect(saved.data()?.label).toBe("Updated shift");
+    expect(saved.data()?.status).toBe("published");
+    expect(saved.data()?.revision).toBe(2);
+  });
+  it("published shifts cannot be deleted; attendance protects the scheduled shift times", async () => {
+    const db = admin().firestore();
+    await assertFails(deleteDoc(doc(db, "shifts", "now-pub")));
+    await assertSucceeds(deleteDoc(doc(db, "shifts", "draft")));
+    await assertSucceeds(setDoc(doc(maya().firestore(), "attendance", "EMP-0002_now-pub"), clockIn()));
+    await assertFails(updateDoc(doc(db, "shifts", "now-pub"), {
+      startAt: hours(2), updatedBy: "EMP-0001", updatedAt: serverTimestamp(), revision: 2,
+    }));
+  });
+  it("publishes large schedules in batches that stay within the rules access limit", async () => {
+    const shifts = Array.from({ length: 22 }, (_, index) => ({
+      id: `rules-batch-${index}`,
+      employeeId: `EMP-BATCH-${index}`,
+    }));
+    await env.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      for (const { id, employeeId } of shifts) {
+        await setDoc(doc(db, "employees", employeeId), {
+          firstName: employeeId, lastName: "Test", email: `${employeeId}@test.example`,
+          phone: "", title: "x", role: "employee", status: "active",
+        });
+        await setDoc(doc(db, "shifts", id), {
+          employeeId, date: "2030-01-01", startAt: hours(48), endAt: hours(56),
+          breakMinutes: 30, label: "s", status: "draft", createdBy: "EMP-0001",
+          updatedBy: "EMP-0001", createdAt: Timestamp.now(), updatedAt: Timestamp.now(), revision: 1,
+        });
+      }
+    });
+
+    const db = admin().firestore();
+    const tooLarge = writeBatch(db);
+    for (const { id } of shifts) {
+      tooLarge.update(doc(db, "shifts", id), {
+        status: "published", updatedBy: "EMP-0001", updatedAt: serverTimestamp(), revision: 2,
+      });
+    }
+    await assertFails(tooLarge.commit());
+
+    for (let i = 0; i < shifts.length; i += 15) {
+      const safeBatch = writeBatch(db);
+      for (const { id } of shifts.slice(i, i + 15)) {
+        safeBatch.update(doc(db, "shifts", id), {
+          status: "published", updatedBy: "EMP-0001", updatedAt: serverTimestamp(), revision: 2,
+        });
+      }
+      await assertSucceeds(safeBatch.commit());
+    }
+    const notificationBatch = writeBatch(db);
+    for (const { employeeId } of shifts) {
+      notificationBatch.set(doc(db, "notifications", `published-${employeeId}`), {
+        recipientId: employeeId,
+        type: "schedule",
+        title: "Your schedule is ready",
+        refType: "schedule",
+        refId: "2030-01-01_2030-01-07",
+        read: false,
+        createdBy: "EMP-0001",
+        createdAt: serverTimestamp(),
+        expiresAt: Timestamp.fromMillis(Date.now() + 151 * 86400_000),
+      });
+    }
+    await assertSucceeds(notificationBatch.commit());
   });
   it("employees cannot write shifts", async () => {
     await assertFails(updateDoc(doc(maya().firestore(), "shifts", "now-pub"), { label: "x" }));
@@ -236,23 +311,87 @@ describe("10 corrections keep an audit trail", () => {
 });
 
 describe("13 shift swaps", () => {
-  const swapDoc = { fromEmployeeId: "EMP-0002", toEmployeeId: "EMP-0003", shiftId: "future-pub", reason: "x", status: "pending_peer", createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
+  const validSwapDoc = async () => {
+    let swap: Record<string, unknown> | undefined;
+    await env.withSecurityRulesDisabled(async (context) => {
+      const shift = (await getDoc(doc(context.firestore(), "shifts", "future-pub"))).data()!;
+      swap = {
+        fromEmployeeId: "EMP-0002",
+        toEmployeeId: "EMP-0003",
+        shiftId: "future-pub",
+        shiftDate: shift.date,
+        shiftStartAt: shift.startAt,
+        shiftEndAt: shift.endAt,
+        shiftLabel: shift.label,
+        reason: "x",
+        status: "pending_peer",
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+    });
+    return swap!;
+  };
   it("requester creates; only the colleague may accept; admin must approve with the shift move", async () => {
-    await assertSucceeds(setDoc(doc(maya().firestore(), "shiftSwapRequests", "s1"), swapDoc));
+    const m = maya().firestore();
+    const requestRef = doc(m, "shiftSwapRequests", "s1");
+    const requestBatch = writeBatch(m);
+    requestBatch.set(requestRef, await validSwapDoc());
+    requestBatch.set(doc(m, "notifications", "swap-request"), {
+      recipientId: "EMP-0003", type: "swap_request", title: "New shift swap request",
+      refType: "swap", refId: requestRef.id,
+      read: false, createdBy: "EMP-0002", createdAt: serverTimestamp(),
+      expiresAt: Timestamp.fromMillis(Date.now() + 151 * 86400_000),
+    });
+    await assertSucceeds(requestBatch.commit());
+    await assertSucceeds(getDoc(doc(jordan().firestore(), "shiftSwapRequests", "s1")));
+    await assertFails(getDoc(doc(jordan().firestore(), "shifts", "future-pub")));
     // requester cannot self-approve
-    await assertFails(updateDoc(doc(maya().firestore(), "shiftSwapRequests", "s1"), { status: "pending_admin", updatedAt: serverTimestamp() }));
-    await assertSucceeds(updateDoc(doc(jordan().firestore(), "shiftSwapRequests", "s1"), { status: "pending_admin", updatedAt: serverTimestamp() }));
+    await assertFails(updateDoc(requestRef, { status: "pending_admin", updatedAt: serverTimestamp() }));
+    const colleagueDb = jordan().firestore();
+    const responseBatch = writeBatch(colleagueDb);
+    responseBatch.update(doc(colleagueDb, "shiftSwapRequests", "s1"), { status: "pending_admin", updatedAt: serverTimestamp() });
+    responseBatch.set(doc(colleagueDb, "notifications", "swap-accepted"), {
+      recipientId: "EMP-0002", type: "swap_update", title: "Coworker accepted your swap request",
+      refType: "swap", refId: requestRef.id,
+      read: false, createdBy: "EMP-0003", createdAt: serverTimestamp(),
+      expiresAt: Timestamp.fromMillis(Date.now() + 151 * 86400_000),
+    });
+    await assertSucceeds(responseBatch.commit());
     // approval without moving the shift fails
     await assertFails(updateDoc(doc(admin().firestore(), "shiftSwapRequests", "s1"), { status: "approved", decidedBy: "EMP-0001", updatedAt: serverTimestamp() }));
     const a = admin().firestore();
     const b = writeBatch(a);
     b.update(doc(a, "shiftSwapRequests", "s1"), { status: "approved", decidedBy: "EMP-0001", updatedAt: serverTimestamp() });
-    b.update(doc(a, "shifts", "future-pub"), { employeeId: "EMP-0003", updatedBy: "EMP-0001", updatedAt: serverTimestamp(), revision: 2, date: "2030-01-01", startAt: hours(48), endAt: hours(56), breakMinutes: 30, label: "s", status: "published", createdBy: "EMP-0001", createdAt: Timestamp.now() });
+    b.update(doc(a, "shifts", "future-pub"), { employeeId: "EMP-0003", updatedBy: "EMP-0001", updatedAt: serverTimestamp(), revision: 2, changedAfterPublish: true });
     await assertSucceeds(b.commit());
   });
   it("cannot swap a shift you do not own, or skip the colleague step", async () => {
-    await assertFails(setDoc(doc(jordan().firestore(), "shiftSwapRequests", "s2"), { ...swapDoc, fromEmployeeId: "EMP-0003", toEmployeeId: "EMP-0002" }));
-    await assertFails(setDoc(doc(maya().firestore(), "shiftSwapRequests", "s3"), { ...swapDoc, status: "pending_admin" }));
+    const valid = await validSwapDoc();
+    await assertFails(setDoc(doc(jordan().firestore(), "shiftSwapRequests", "s2"), { ...valid, fromEmployeeId: "EMP-0003", toEmployeeId: "EMP-0002" }));
+    await assertFails(setDoc(doc(maya().firestore(), "shiftSwapRequests", "s3"), { ...valid, status: "pending_admin" }));
+    await assertFails(setDoc(doc(maya().firestore(), "shiftSwapRequests", "s4"), { ...valid, shiftLabel: "forged" }));
+  });
+  it("approves a two-way swap by moving both shifts atomically", async () => {
+    const m = maya().firestore();
+    await setDoc(doc(m, "shiftSwapRequests", "two-way"), await validSwapDoc());
+    await updateDoc(doc(jordan().firestore(), "shiftSwapRequests", "two-way"), {
+      status: "pending_admin", receivedShiftId: "jordan-future-pub", updatedAt: serverTimestamp(),
+    });
+
+    const db = admin().firestore();
+    const batch = writeBatch(db);
+    batch.update(doc(db, "shiftSwapRequests", "two-way"), {
+      status: "approved", decidedBy: "EMP-0001", updatedAt: serverTimestamp(),
+    });
+    batch.update(doc(db, "shifts", "future-pub"), {
+      employeeId: "EMP-0003", updatedBy: "EMP-0001", updatedAt: serverTimestamp(), revision: 2,
+      changedAfterPublish: true,
+    });
+    batch.update(doc(db, "shifts", "jordan-future-pub"), {
+      employeeId: "EMP-0002", updatedBy: "EMP-0001", updatedAt: serverTimestamp(), revision: 2,
+      changedAfterPublish: true,
+    });
+    await assertSucceeds(batch.commit());
   });
 });
 
@@ -272,6 +411,22 @@ describe("14 announcements", () => {
     await assertSucceeds(getDoc(doc(jordan().firestore(), "announcements", "all")));
     await assertFails(getDoc(doc(jordan().firestore(), "announcements", "draft")));
   });
+  it("publishes an announcement with its employee notification in one batch", async () => {
+    const db = admin().firestore();
+    const announcementRef = doc(db, "announcements", "published-with-notification");
+    const batch = writeBatch(db);
+    batch.set(announcementRef, {
+      title: "Schedule update", body: "The schedule is ready.", priority: "normal", status: "published",
+      audience: "all", audienceIds: [], publishedBy: "EMP-0001",
+      createdAt: serverTimestamp(), publishedAt: serverTimestamp(),
+    });
+    batch.set(doc(db, "notifications", "announcement-notification"), {
+      recipientId: "EMP-0002", type: "announcement", title: "New announcement",
+      refType: "announcement", refId: announcementRef.id, read: false, createdBy: "EMP-0001",
+      createdAt: serverTimestamp(), expiresAt: Timestamp.fromMillis(Date.now() + 151 * 86400_000),
+    });
+    await assertSucceeds(batch.commit());
+  });
 });
 
 describe("15-16 notifications", () => {
@@ -282,6 +437,7 @@ describe("15-16 notifications", () => {
   it("admin creates with ~5-month expiry; wrong expiry rejected", async () => {
     const db = admin().firestore();
     await assertSucceeds(setDoc(doc(db, "notifications", "n1"), note()));
+    await assertFails(setDoc(doc(db, "notifications", "with-body"), note({ body: "Not allowed by the notification schema" })));
     await assertFails(setDoc(doc(db, "notifications", "n2"), note({ expiresAt: Timestamp.fromMillis(Date.now() + 400 * 86400_000) })));
     await assertFails(setDoc(doc(db, "notifications", "n3"), note({ expiresAt: Timestamp.fromMillis(Date.now() + 10 * 86400_000) })));
   });
@@ -299,6 +455,50 @@ describe("15-16 notifications", () => {
     await assertSucceeds(setDoc(doc(maya().firestore(), "attendance", "EMP-0002_now-pub"), clockIn()));
     await assertFails(deleteDoc(doc(admin().firestore(), "attendance", "EMP-0002_now-pub")));
     expect(true).toBe(true);
+  });
+});
+
+describe("17 notification preferences", () => {
+  it("notification preferences are private, typed, and owner-writable", async () => {
+    const own = doc(maya().firestore(), "employees", "EMP-0002", "notificationPreferences", "current");
+    await assertSucceeds(setDoc(own, {
+      schedule: true, announcements: true, swaps: false, updatedAt: serverTimestamp(),
+    }));
+    await assertSucceeds(getDoc(own));
+    await assertFails(getDoc(doc(jordan().firestore(), "employees", "EMP-0002", "notificationPreferences", "current")));
+    await assertFails(setDoc(doc(jordan().firestore(), "employees", "EMP-0002", "notificationPreferences", "current"), {
+      schedule: true, announcements: true, swaps: true, updatedAt: serverTimestamp(),
+    }));
+    await assertFails(setDoc(own, {
+      schedule: "yes", announcements: true, swaps: true, updatedAt: serverTimestamp(),
+    }));
+  });
+});
+
+describe("18 workplace business details", () => {
+  it("admins can save bounded business details and employees cannot change them", async () => {
+    const settingsRef = doc(admin().firestore(), "workplaceSettings", "main");
+    await assertSucceeds(setDoc(settingsRef, {
+      businessName: "Harbor Cafe",
+      businessAddress: "14 Harbour Street",
+      businessPhone: "+1 555 0100",
+      businessEmail: "hello@example.com",
+      timezone: "America/New_York",
+      clockInEarlyMinutes: 15,
+      clockInLateMinutes: 120,
+      updatedBy: "EMP-0001",
+      updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(settingsRef, {
+      businessAddress: "x".repeat(301),
+      updatedBy: "EMP-0001",
+      updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(maya().firestore(), "workplaceSettings", "main"), {
+      businessName: "Not authorized",
+      updatedBy: "EMP-0002",
+      updatedAt: serverTimestamp(),
+    }));
   });
 });
 

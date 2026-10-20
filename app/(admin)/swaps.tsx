@@ -83,6 +83,9 @@ export default function Swaps() {
               <Text style={[type.card, { color: colors.text }]}>{to ? fullName(to) : ""} takes this shift</Text>
             </Card>
             {current.reason ? <Text style={[type.body, { color: colors.textSecondary }]}>“{current.reason}”</Text> : null}
+            {current.decisionReason ? (
+              <Text style={[type.meta, { color: colors.error }]}>Reason: {current.decisionReason}</Text>
+            ) : null}
             <Text style={[type.meta, { color: colors.muted }]}>Administrator approval is required for this change.</Text>
             {reviewable ? (
               <TextField label="Decline reason (optional)" value={reason} onChangeText={setReason} placeholder="Shown to the employee if declined" />
@@ -111,11 +114,17 @@ export default function Swaps() {
         primary="Approve"
         secondary="Cancel"
         onSecondary={() => setConfirm(null)}
-        onPrimary={() => {
-          if (current) updateSwap(current.id, "Approved");
+        onPrimary={async () => {
+          if (!current) return;
+          try {
+            await updateSwap(current.id, "Approved");
+            setSnack({ message: "Swap approved", tone: "success" });
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : "Try again.";
+            setSnack({ message: `Couldn't approve the swap: ${detail}`, tone: "warning" });
+          }
           setConfirm(null);
           setOpenId(null);
-          setSnack({ message: "Swap approved", tone: "success" });
         }}
       />
       <Dialog
@@ -127,12 +136,18 @@ export default function Swaps() {
         primary="Decline"
         secondary="Cancel"
         onSecondary={() => setConfirm(null)}
-        onPrimary={() => {
-          if (current) updateSwap(current.id, "Declined");
+        onPrimary={async () => {
+          if (!current) return;
+          try {
+            await updateSwap(current.id, "Declined", reason);
+            setSnack({ message: "Swap declined", tone: "info" });
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : "Try again.";
+            setSnack({ message: `Couldn't decline the swap: ${detail}`, tone: "warning" });
+          }
           setConfirm(null);
           setOpenId(null);
           setReason("");
-          setSnack({ message: "Swap declined", tone: "info" });
         }}
       />
     </Screen>

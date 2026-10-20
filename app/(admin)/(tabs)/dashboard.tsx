@@ -1,8 +1,9 @@
 import { fullName } from "@/src/data";
-import { greeting, isoDate, todayLabel } from "@/src/dates";
+import { greeting, todayLabel } from "@/src/dates";
+import { workplaceToday } from "@/src/lib/time";
 import { useStore } from "@/src/store";
-import { BUSINESS_NAME, WORKPLACE_ADDRESS, colors, type } from "@/src/theme";
-import { Avatar, Card, Screen, SectionHeader, StatusBadge } from "@/src/ui";
+import { colors, type } from "@/src/theme";
+import { Card, Screen, SectionHeader, StatusBadge } from "@/src/ui";
 import { ActionTile, HeaderRow, StatCard, badgeTone } from "@/src/widgets";
 import { ClipboardCheck, Megaphone, UserPlus, CalendarPlus } from "lucide-react-native";
 import { useRouter } from "expo-router";
@@ -10,10 +11,13 @@ import { Text, View } from "react-native";
 
 export default function AdminDashboard() {
   const router = useRouter();
-  const { employees, shifts, attendance, swaps, notifications, registrations, getEmployee: findEmployee } = useStore();
-  const today = isoDate();
-  const todayShifts = shifts.filter((s) => s.date === today);
-  const clocked = attendance.filter((a) => a.date === today && a.clockIn && !a.clockOut || a.status === "On time" && a.date === today);
+  const { userId, shifts, attendance, swaps, notifications, registrations, workplaceTimezone, businessName, businessAddress, getEmployee: findEmployee } = useStore();
+  const today = workplaceToday(workplaceTimezone);
+  const todayShifts = shifts.filter((s) => s.date === today && (s.status === "Published" || s.status === "Updated"));
+  const clocked = attendance.filter((a) => a.date === today && a.clockIn && a.clockIn !== "—" && (!a.clockOut || a.clockOut === "—"));
+  const clockedIds = new Set(clocked.map((record) => record.employeeId));
+  const scheduledIds = new Set(todayShifts.map((shift) => shift.employeeId));
+  const notClockedIn = [...scheduledIds].filter((id) => !clockedIds.has(id)).length;
   const late = attendance.filter((a) => a.date === today && a.status === "Late");
   const pending = swaps.filter((s) => s.status === "Awaiting approval");
   const missing = attendance.filter((a) => a.date === today && a.status === "Incomplete");
@@ -21,18 +25,18 @@ export default function AdminDashboard() {
   return (
     <Screen scroll>
       <HeaderRow
-        greeting={greeting()}
-        name="Elena"
-        date={todayLabel()}
+        greeting={greeting(workplaceTimezone)}
+        name={findEmployee(userId ?? "")?.firstName ?? "Admin"}
+        date={todayLabel(workplaceTimezone)}
         unread={notifications.some((n) => n.unread)}
         onBell={() => router.push("/(admin)/announcements")}
       />
       <Text style={[type.meta, { color: colors.textSecondary, marginTop: -8, marginBottom: 12 }]}>
-        {BUSINESS_NAME} · {WORKPLACE_ADDRESS}
+        {businessName}{businessAddress ? ` · ${businessAddress}` : ""}
       </Text>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
         <StatCard label="Scheduled today" value={todayShifts.length} icon={CalendarPlus} />
-        <StatCard label="Clocked in" value={Math.max(clocked.length, 2)} icon={ClipboardCheck} />
+        <StatCard label="Clocked in" value={clockedIds.size} icon={ClipboardCheck} />
         <StatCard label="Pending staff" value={registrations.length} icon={UserPlus} />
         <StatCard label="Pending swaps" value={pending.length} icon={Megaphone} />
       </View>
@@ -41,15 +45,15 @@ export default function AdminDashboard() {
       <Card>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
           <StatusBadge label={`Scheduled ${todayShifts.length}`} tone="info" />
-          <StatusBadge label="Clocked in 2" tone="success" />
-          <StatusBadge label="Not yet clocked in 1" tone="neutral" />
+          <StatusBadge label={`Clocked in ${clockedIds.size}`} tone="success" />
+          <StatusBadge label={`Not yet clocked in ${notClockedIn}`} tone="neutral" />
           <StatusBadge label={`Late ${late.length}`} tone="warning" />
           <StatusBadge label={`Missing clock-out ${missing.length}`} tone="danger" />
         </View>
         <View style={{ height: 10, borderRadius: 6, backgroundColor: colors.surface, marginTop: 14, overflow: "hidden", flexDirection: "row" }}>
-          <View style={{ flex: 3, backgroundColor: colors.success }} />
-          <View style={{ flex: 1, backgroundColor: colors.warning }} />
-          <View style={{ flex: 1, backgroundColor: colors.error }} />
+          {clockedIds.size > 0 ? <View style={{ flex: clockedIds.size, backgroundColor: colors.success }} /> : null}
+          {late.length > 0 ? <View style={{ flex: late.length, backgroundColor: colors.warning }} /> : null}
+          {notClockedIn > 0 ? <View style={{ flex: notClockedIn, backgroundColor: colors.border }} /> : null}
         </View>
       </Card>
 
@@ -69,7 +73,7 @@ export default function AdminDashboard() {
           return (
             <Card key={shift.id}>
               <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
-                <Avatar initials={employee.initials} color={employee.accent} />
+
                 <View style={{ flex: 1 }}>
                   <Text style={[type.card, { color: colors.text }]}>{fullName(employee)}</Text>
                   <Text style={[type.meta, { color: colors.textSecondary }]}>
@@ -90,7 +94,7 @@ export default function AdminDashboard() {
       />
       {registrations.length > 0 && (
         <Card
-          style={{ backgroundColor: colors.warningSoft, borderColor: "#F3E0B8", marginBottom: 10 }}
+          style={{ backgroundColor: colors.warningSoft, borderColor: colors.warning, marginBottom: 10 }}
           onPress={() => router.push("/(admin)/pending-approvals")}
         >
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
@@ -107,14 +111,14 @@ export default function AdminDashboard() {
         </Card>
       )}
       <Card
-        style={{ backgroundColor: pending.length > 0 ? colors.warningSoft : colors.surface, borderColor: pending.length > 0 ? "#F3E0B8" : colors.border }}
+        style={{ backgroundColor: pending.length > 0 ? colors.warningSoft : colors.surface, borderColor: pending.length > 0 ? colors.warning : colors.border }}
         onPress={() => router.push("/(admin)/swaps")}
       >
         <Text style={[type.card, { color: colors.text }]}>
           {pending.length} shift-swap request{pending.length === 1 ? "" : "s"} awaiting review
         </Text>
         <Text style={[type.meta, { color: colors.textSecondary, marginTop: 4 }]}>
-          {missing.length} missing clock-out · Draft holiday coverage still unpublished
+          {missing.length} missing clock-out record{missing.length === 1 ? "" : "s"} today
         </Text>
       </Card>
     </Screen>
