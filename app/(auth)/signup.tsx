@@ -70,7 +70,8 @@ export default function SignUp() {
       />
       <Button label="Create account" onPress={submit} loading={busy} />
       <Text style={[type.tiny, { color: colors.muted, textAlign: "center" }]}>
-        You'll get an email to verify your address. Access is only granted to people your administrator has added.
+        Creating an account only registers your email here. After you verify your address, an administrator must approve your
+        account and assign your role before you can sign in.
       </Text>
       {canSignIn ? (
         <>

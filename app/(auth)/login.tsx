@@ -1,4 +1,4 @@
-﻿import { useAuth, type AuthStatus } from "@/src/auth/AuthProvider";
+import { useAuth, type AuthStatus } from "@/src/auth/AuthProvider";
 import { AuthShell, FormError, OrDivider, PasswordField, SwitchLink } from "@/src/auth/AuthShell";
 import { BUSINESS_NAME, colors, type } from "@/src/theme";
 import { Button, TextField } from "@/src/ui";
@@ -22,6 +22,10 @@ const MESSAGES: Partial<Record<AuthStatus, { title: string; body: string }>> = {
     title: "Employee record linked to another account",
     body: "This employee record is already connected to a different account. Ask your administrator to reset the link.",
   },
+  pendingApproval: {
+    title: "Awaiting administrator approval",
+    body: "Your sign-up was received. Once an administrator confirms your account and assigns your role you'll be able to sign in.",
+  },
   deactivated: {
     title: "Account deactivated",
     body: "Your access to this workplace has ended. Contact your administrator if you think this is a mistake.",
@@ -39,9 +43,11 @@ export default function Login() {
 
   useEffect(() => clearError, [clearError]);
 
-  // Logged in with an email that is not verified yet.
+  // Handle auth routing on login
   useEffect(() => {
+    if (status === "ready") router.replace("/");
     if (status === "unverified") router.replace("/(auth)/verify-email");
+    if (status === "pendingApproval") router.replace("/(auth)/pending-approval");
   }, [status, router]);
 
   const msg = MESSAGES[status];

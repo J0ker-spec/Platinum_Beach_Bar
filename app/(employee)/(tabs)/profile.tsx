@@ -1,5 +1,5 @@
 import { useAuth } from "@/src/auth/AuthProvider";
-import { findEmployee, fullName } from "@/src/data";
+import { fullName } from "@/src/data";
 import { useStore } from "@/src/store";
 import { APP_NAME, colors, type } from "@/src/theme";
 import { Avatar, Card, Dialog, Screen, SettingRow, StatusBadge } from "@/src/ui";
@@ -10,7 +10,7 @@ import { Pressable, Text, View } from "react-native";
 
 export default function Profile() {
   const router = useRouter();
-  const { userId, signOut, setSnack } = useStore();
+  const { userId, signOut, setSnack, getEmployee: findEmployee } = useStore();
   const { signOut: authSignOut } = useAuth();
   const me = findEmployee(userId ?? "EMP-0001")!;
   const [signOutOpen, setSignOutOpen] = useState(false);

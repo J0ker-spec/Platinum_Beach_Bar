@@ -1,4 +1,4 @@
-import { employees, findEmployee } from "@/src/data";
+
 import { formatFull, isoDate } from "@/src/dates";
 import { useStore } from "@/src/store";
 import { colors, type } from "@/src/theme";
@@ -13,7 +13,7 @@ const steps = ["Shift", "Colleague", "Review"];
 export default function SwapFlow() {
   const router = useRouter();
   const { shiftId } = useLocalSearchParams<{ shiftId?: string }>();
-  const { userId, shifts, addSwap, setSnack } = useStore();
+  const { userId, shifts, employees, addSwap, setSnack, getEmployee: findEmployee } = useStore();
   const me = findEmployee(userId ?? "EMP-0001")!;
   const mine = shifts.filter((s) => s.employeeId === me.id && s.status !== "Cancelled");
   const [step, setStep] = useState(0);

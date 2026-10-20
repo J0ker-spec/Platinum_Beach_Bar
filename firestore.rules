@@ -52,7 +52,6 @@ service cloud.firestore {
         && request.resource.data.claimedByUid == null
         && request.resource.data.createdBy == myId()
         && existsAfter(/databases/$(database)/documents/employees/$(request.resource.data.employeeId));
-      // Employee claims their own entry (paired with userLinks create above).
       allow update: if signedIn() && request.auth.token.email_verified == true
         && email == emailKey()
         && resource.data.claimedByUid == null
@@ -64,6 +63,22 @@ service cloud.firestore {
       allow update: if isAdmin() && changedOnly(['claimedByUid', 'claimedAt'])
         && request.resource.data.claimedByUid == null;
       allow delete: if false;
+    }
+
+    // registrations/{uid}: a verified sign-up waiting for an administrator to approve it and
+    // assign a role (employee or admin). The document id is the Firebase auth uid, so a single
+    // user can only have one pending registration (create-once). Approval creates the employee,
+    // directory and authorization entries; that batch deletes this document (see docs/ARCHITECTURE.md).
+    match /registrations/{uid} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      // Stores every pending registration in Firestore so an admin can approve them at a later date.
+      allow create, update: if signedIn()
+        && request.auth.uid == uid
+        && onlyKeys(['email', 'name', 'status', 'createdAt'])
+        && request.resource.data.status == 'pending'
+        && !exists(/databases/$(database)/documents/userLinks/$(request.auth.uid)); // not already bound to an employee
+      // Owner may withdraw a pending request; an admin removes it when it is approved (or rejected).
+      allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
     }
 
     // ------------------------------------------------------------ employees
@@ -78,7 +93,7 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/systemMeta/counters).data.employeeSeq + 1
            == getAfter(/databases/$(database)/documents/systemMeta/counters).data.employeeSeq
         && onlyKeys(['firstName', 'lastName', 'email', 'phone', 'title', 'status', 'role', 'createdBy', 'createdAt', 'updatedAt'])
-        && request.resource.data.role == 'employee'
+        && request.resource.data.role in ['employee', 'admin']
         && request.resource.data.status == 'active'
         && request.resource.data.email == request.resource.data.email.lower()
         && request.resource.data.createdBy == myId()
@@ -318,7 +333,7 @@ service cloud.firestore {
         && changedOnly(['status', 'updatedAt', 'decidedBy'])
         && request.resource.data.decidedBy == myId()
         && request.resource.data.updatedAt == request.time
-        && (request.resource.data.status == 'rejected'
+        && (request.resource.data.status in ['rejected', 'declined']
             || (request.resource.data.status == 'approved'
                 && get(/databases/$(database)/documents/shifts/$(resource.data.shiftId)).data.employeeId == resource.data.fromEmployeeId
                 && getAfter(/databases/$(database)/documents/shifts/$(resource.data.shiftId)).data.employeeId == resource.data.toEmployeeId

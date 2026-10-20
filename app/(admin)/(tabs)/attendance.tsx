@@ -1,4 +1,4 @@
-import { findEmployee, fullName } from "@/src/data";
+import { fullName } from "@/src/data";
 import { isoDate } from "@/src/dates";
 import { useStore } from "@/src/store";
 import { colors, type } from "@/src/theme";
@@ -9,7 +9,7 @@ import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
 export default function AdminAttendance() {
-  const { attendance, correctAttendance } = useStore();
+  const { attendance, correctAttendance, getEmployee: findEmployee } = useStore();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All");
   const [open, setOpen] = useState<string | null>(null);

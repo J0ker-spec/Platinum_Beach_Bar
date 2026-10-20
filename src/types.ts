@@ -90,3 +90,13 @@ export type AppNotification = {
   unread: boolean;
   href?: string;
 };
+
+/** A verified sign-up waiting for an administrator to approve it and assign a role. */
+export type Registration = {
+  id: string; // Firebase auth uid of the applicant
+  email: string;
+  name: string;
+  status: "pending" | "approved" | "rejected";
+  createdAt: string; // display-formatted
+  createdAtTs?: number;
+};

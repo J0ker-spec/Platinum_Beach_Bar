@@ -1,24 +1,53 @@
 import { isoDate, nowTime } from "@/src/dates";
+import { parseQr } from "@/src/lib/qr";
 import { useStore } from "@/src/store";
 import { colors, type } from "@/src/theme";
 import { Button, Dialog, Screen, Sheet } from "@/src/ui";
 import { AlertTriangle, CheckCircle2, Clock3, WifiOff } from "lucide-react-native";
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import { useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
 type ScanState = "idle" | "confirm-in" | "confirm-out" | "success-in" | "success-out" | "invalid" | "revoked" | "noshift" | "duplicate" | "orphan" | "network";
 
 export default function Scan() {
   const router = useRouter();
-  const { clockedIn, setClockedIn, shifts, userId } = useStore();
+  const { clockedIn, clockIn, clockOut, shifts, userId } = useStore();
+  const [permission, requestPermission] = useCameraPermissions();
+  const proof = useRef<string | null>(null);
+  const busy = useRef(false);
   const [state, setState] = useState<ScanState>("idle");
   const time = nowTime();
-  const todayShift = shifts.find((s) => s.employeeId === (userId ?? "EMP-0001") && s.date === isoDate());
+  const todayShift = shifts.find((s) => s.employeeId === (userId ?? "EMP-0001") && s.date === isoDate() && s.status === "Published");
 
-  const simulate = () => {
+  const onScan = (value: string) => {
+    if (busy.current || state !== "idle") return;
+    const token = parseQr(value);
+    if (!token) return setState("invalid");
     if (!todayShift) return setState("noshift");
+    proof.current = token;
     setState(clockedIn ? "confirm-out" : "confirm-in");
+  };
+
+  const confirm = async () => {
+    if (busy.current || !proof.current) return;
+    busy.current = true;
+    const out = state === "confirm-out";
+    try {
+      if (out) await clockOut(proof.current);
+      else await clockIn(todayShift!.id, proof.current);
+      setState(out ? "success-out" : "success-in");
+    } catch (e: any) {
+      const m = e?.message;
+      setState(
+        m === "duplicate" ? "duplicate" : m === "orphan" ? "orphan"
+        : e?.code === "permission-denied" ? "revoked"
+        : e?.code === "unavailable" || e?.code === "deadline-exceeded" ? "network" : "invalid"
+      );
+    } finally {
+      busy.current = false;
+    }
   };
 
   return (
@@ -28,7 +57,7 @@ export default function Scan() {
       </Pressable>
       <Text style={[type.title, { color: colors.text, marginTop: 8 }]}>Scan workplace QR code</Text>
       <Text style={[type.body, { color: colors.textSecondary }]}>
-        Point this frame at the attendance code displayed at Northline Café. Camera access is not used in this prototype.
+        Point the camera at the attendance code displayed at Platnumx.
       </Text>
 
       <View style={{ alignItems: "center", marginVertical: 24 }}>
@@ -62,30 +91,23 @@ export default function Scan() {
                 }}
               />
             ))}
-            <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-              <View style={{ width: 72, height: 72, backgroundColor: "#fff", borderRadius: 8 }} />
-            </View>
+            {permission?.granted ? (
+              <CameraView
+                style={{ flex: 1, margin: 6 }}
+                facing="back"
+                barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+                onBarcodeScanned={state === "idle" ? ({ data }) => onScan(data) : undefined}
+              />
+            ) : (
+              <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 8 }}>
+                <Button label="Allow camera" onPress={() => void requestPermission()} />
+              </View>
+            )}
           </View>
         </View>
         <Text style={[type.tiny, { color: colors.muted, marginTop: 12, textAlign: "center" }]}>
-          The scan stays on this device in the preview. No photo is stored.
+          No photo is stored.
         </Text>
-      </View>
-
-      <Button label="Simulate successful scan" onPress={simulate} />
-      <View style={{ height: 8 }} />
-      <Text style={[type.tiny, { color: colors.muted, marginBottom: 8 }]}>Preview other states</Text>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-        {[
-          ["Invalid QR", "invalid"],
-          ["Revoked code", "revoked"],
-          ["No shift", "noshift"],
-          ["Duplicate", "duplicate"],
-          ["Missing clock-in", "orphan"],
-          ["Network", "network"],
-        ].map(([label, key]) => (
-          <Button key={key} label={label} variant="secondary" onPress={() => setState(key as ScanState)} />
-        ))}
       </View>
 
       <Sheet visible={state === "confirm-in" || state === "confirm-out"} onClose={() => setState("idle")}>
@@ -95,13 +117,10 @@ export default function Scan() {
           {todayShift ? `${todayShift.label} · ${todayShift.start} – ${todayShift.end}` : "No shift"}
         </Text>
         <Text style={[type.card, { color: colors.text }]}>Proposed time · {time}</Text>
-        <Text style={[type.meta, { color: colors.muted }]}>This becomes the workplace attendance record in production.</Text>
+        <Text style={[type.meta, { color: colors.muted }]}>This becomes your attendance record.</Text>
         <Button
           label={state === "confirm-in" ? "Confirm clock-in" : "Confirm clock-out"}
-          onPress={() => {
-            setClockedIn(state === "confirm-in", time);
-            setState(state === "confirm-in" ? "success-in" : "success-out");
-          }}
+          onPress={() => void confirm()}
         />
         <Button label="Cancel" variant="ghost" onPress={() => setState("idle")} />
       </Sheet>
@@ -133,7 +152,16 @@ export default function Scan() {
             network: "Temporary connection issue",
           }[state as string] ?? "Something went wrong"
         }
-        body="This is a demonstration state. Try another preview or return to attendance."
+        body={
+          {
+            invalid: "That is not a Platnumx attendance code, or it could not be processed.",
+            revoked: "The code was replaced, or you are outside the allowed clock-in window. Ask your manager for the current code.",
+            noshift: "You have no published shift today.",
+            duplicate: "You already have an attendance record for this shift.",
+            orphan: "Clock in before clocking out.",
+            network: "Check your connection and try again.",
+          }[state as string] ?? ""
+        }
         primary="Try again"
         secondary="Back"
         onPrimary={() => setState("idle")}

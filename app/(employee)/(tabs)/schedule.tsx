@@ -1,4 +1,3 @@
-import { findEmployee } from "@/src/data";
 import { addDays, formatFull, formatRange, isoDate, weekDates } from "@/src/dates";
 import { useStore } from "@/src/store";
 import { colors, type } from "@/src/theme";
@@ -11,7 +10,7 @@ import { Pressable, Text, View } from "react-native";
 
 export default function EmployeeSchedule() {
   const router = useRouter();
-  const { userId, shifts, swaps } = useStore();
+  const { userId, shifts, swaps, getEmployee: findEmployee } = useStore();
   const me = findEmployee(userId ?? "EMP-0001")!;
   const [anchor, setAnchor] = useState(new Date());
   const dates = weekDates(anchor);

@@ -1,4 +1,4 @@
-import { findEmployee, fullName } from "@/src/data";
+import { fullName } from "@/src/data";
 import { formatPretty } from "@/src/dates";
 import { useStore } from "@/src/store";
 import { colors, type } from "@/src/theme";
@@ -12,7 +12,7 @@ import { Pressable, Text, View } from "react-native";
 export default function EmployeeDetail() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { employees, shifts, attendance, upsertEmployee, setSnack } = useStore();
+  const { employees, shifts, attendance, upsertEmployee, setEmployeeRole, userId, setSnack, getEmployee: findEmployee } = useStore();
   const person = employees.find((e) => e.id === id) ?? findEmployee(String(id));
   const [menu, setMenu] = useState(false);
   const [deactivate, setDeactivate] = useState(false);
@@ -105,6 +105,13 @@ export default function EmployeeDetail() {
             }
           }}
         />
+        {person.id !== userId && (
+          <Button
+            label={person.isAdmin ? "Change to employee" : "Make admin"}
+            variant="ghost"
+            onPress={() => { setMenu(false); void setEmployeeRole(person.id, person.isAdmin ? "employee" : "admin"); }}
+          />
+        )}
         <Button label="Delete permanently" variant="danger" onPress={() => { setMenu(false); setRemove(1); }} />
         <Button label="Close" variant="ghost" onPress={() => setMenu(false)} />
       </Sheet>

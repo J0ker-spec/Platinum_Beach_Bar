@@ -1,5 +1,5 @@
-export const APP_NAME = "PlatinumX";
-export const BUSINESS_NAME = "Northline Café";
+export const APP_NAME = "Platnumx";
+export const BUSINESS_NAME = "Platinum Beach";
 export const WORKPLACE_ADDRESS = "14 Harbour Street";
 
 export const colors = {

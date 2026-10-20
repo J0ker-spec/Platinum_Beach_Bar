@@ -1,4 +1,4 @@
-import { findEmployee, fullName } from "@/src/data";
+import { fullName } from "@/src/data";
 import { greeting, isoDate, todayLabel } from "@/src/dates";
 import { useStore } from "@/src/store";
 import { BUSINESS_NAME, colors, type } from "@/src/theme";
@@ -10,7 +10,7 @@ import { Text, View } from "react-native";
 
 export default function EmployeeHome() {
   const router = useRouter();
-  const { userId, shifts, announcements, notifications, clockedIn } = useStore();
+  const { userId, shifts, announcements, notifications, clockedIn, getEmployee: findEmployee } = useStore();
   const me = findEmployee(userId ?? "EMP-0001")!;
   const today = isoDate();
   const mine = shifts.filter((s) => s.employeeId === me.id && s.status !== "Cancelled");

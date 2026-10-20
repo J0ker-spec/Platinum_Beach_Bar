@@ -11,6 +11,7 @@ export default function Splash() {
     return <Redirect href={profile.role === "admin" ? "/(admin)/(tabs)/dashboard" : "/(employee)/(tabs)/home"} />;
   }
   if (status === "unverified") return <Redirect href="/(auth)/verify-email" />;
+  if (status === "pendingApproval") return <Redirect href="/(auth)/pending-approval" />;
   // Signed-out visitors land on sign up first; people already in the system can switch to log in.
   // Authenticated-but-blocked states (unauthorized, deactivated, error) show their message on the login screen.
   if (status === "signedOut") return <Redirect href="/(auth)/signup" />;

@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "PlatinumX",
+    "name": "Platnumx",
     "slug": "platinumx",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -21,7 +21,8 @@
       "expo-splash-screen",
       "expo-status-bar",
       "expo-web-browser",
-      "expo-secure-store"
+      "expo-secure-store",
+      ["expo-camera", { "cameraPermission": "Platnumx uses the camera to scan the workplace attendance code." }]
     ],
     "experiments": {
       "typedRoutes": true

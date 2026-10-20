@@ -1,353 +1,44 @@
-import { addDays, isoDate } from "./dates";
-import type {
-  Announcement,
-  AppNotification,
-  AttendanceRecord,
-  Employee,
-  Shift,
-  SwapRequest,
-} from "./types";
+﻿// UI helpers shared by screens. There is NO seed/demo data here anymore: the app now reads
+// everything from Firestore via src/store.tsx. These helpers only format values for display.
 
-export const employees: Employee[] = [
-  {
-    id: "EMP-0001",
-    firstName: "Maya",
-    lastName: "Chen",
-    email: "maya.chen@northline.example",
-    phone: "+1 415 555 0142",
-    title: "Barista",
-    status: "Active",
-    initials: "MC",
-    accent: "#4F63E9",
-  },
-  {
-    id: "EMP-0002",
-    firstName: "Jordan",
-    lastName: "Hale",
-    email: "jordan.hale@northline.example",
-    phone: "+1 415 555 0177",
-    title: "Shift lead",
-    status: "Active",
-    initials: "JH",
-    accent: "#8061D9",
-  },
-  {
-    id: "EMP-0003",
-    firstName: "Priya",
-    lastName: "Raman",
-    email: "priya.raman@northline.example",
-    phone: "+1 415 555 0190",
-    title: "Server",
-    status: "Active",
-    initials: "PR",
-    accent: "#3778D6",
-  },
-  {
-    id: "EMP-0004",
-    firstName: "Alex",
-    lastName: "Kim",
-    email: "alex.kim@northline.example",
-    phone: "+1 415 555 0118",
-    title: "Kitchen",
-    status: "Active",
-    initials: "AK",
-    accent: "#159A70",
-  },
-  {
-    id: "EMP-0005",
-    firstName: "Sam",
-    lastName: "Ortega",
-    email: "sam.ortega@northline.example",
-    phone: "+1 415 555 0164",
-    title: "Barista",
-    status: "Inactive",
-    initials: "SO",
-    accent: "#9298AA",
-  },
-  {
-    id: "ADM-0001",
-    firstName: "Elena",
-    lastName: "Voss",
-    email: "elena.voss@northline.example",
-    phone: "+1 415 555 0101",
-    title: "General manager",
-    status: "Active",
-    initials: "EV",
-    accent: "#3647BD",
-    isAdmin: true,
-  },
-];
+export type Nameable = { firstName?: string; lastName?: string; displayName?: string };
 
-const today = isoDate();
-const t = (offset: number) => isoDate(addDays(today, offset));
-
-export const shifts: Shift[] = [
-  {
-    id: "sh-maya-today",
-    employeeId: "EMP-0001",
-    date: t(0),
-    start: "9:00 AM",
-    end: "5:00 PM",
-    breakMinutes: 30,
-    label: "Opening barista",
-    location: "Northline Café",
-    notes: "Cover pastry case restock before 10:00 AM.",
-    status: "Published",
-  },
-  {
-    id: "sh-maya-tom",
-    employeeId: "EMP-0001",
-    date: t(1),
-    start: "11:00 AM",
-    end: "7:00 PM",
-    breakMinutes: 30,
-    label: "Barista",
-    location: "Northline Café",
-    status: "Published",
-  },
-  {
-    id: "sh-maya-wed",
-    employeeId: "EMP-0001",
-    date: t(2),
-    start: "9:00 AM",
-    end: "3:00 PM",
-    breakMinutes: 20,
-    label: "Barista",
-    location: "Northline Café",
-    status: "Updated",
-  },
-  {
-    id: "sh-jordan-today",
-    employeeId: "EMP-0002",
-    date: t(0),
-    start: "8:00 AM",
-    end: "4:00 PM",
-    breakMinutes: 30,
-    label: "Shift lead",
-    location: "Northline Café",
-    status: "Published",
-  },
-  {
-    id: "sh-priya-today",
-    employeeId: "EMP-0003",
-    date: t(0),
-    start: "10:00 AM",
-    end: "6:00 PM",
-    breakMinutes: 30,
-    label: "Floor service",
-    location: "Northline Café",
-    status: "Published",
-  },
-  {
-    id: "sh-alex-today",
-    employeeId: "EMP-0004",
-    date: t(0),
-    start: "7:00 AM",
-    end: "3:00 PM",
-    breakMinutes: 30,
-    label: "Kitchen prep",
-    location: "Northline Café",
-    status: "Published",
-  },
-  {
-    id: "sh-jordan-fri",
-    employeeId: "EMP-0002",
-    date: t(3),
-    start: "9:00 AM",
-    end: "5:00 PM",
-    breakMinutes: 30,
-    label: "Shift lead",
-    location: "Northline Café",
-    status: "Draft",
-  },
-];
-
-export const attendance: AttendanceRecord[] = [
-  {
-    id: "att-1",
-    employeeId: "EMP-0001",
-    date: t(-1),
-    shiftId: "sh-maya-yest",
-    scheduledStart: "9:00 AM",
-    scheduledEnd: "5:00 PM",
-    clockIn: "8:54 AM",
-    clockOut: "5:03 PM",
-    status: "On time",
-  },
-  {
-    id: "att-2",
-    employeeId: "EMP-0001",
-    date: t(-2),
-    scheduledStart: "11:00 AM",
-    scheduledEnd: "7:00 PM",
-    clockIn: "11:12 AM",
-    clockOut: "7:01 PM",
-    status: "Late",
-    notes: "Arrived 12 minutes after scheduled start.",
-  },
-  {
-    id: "att-3",
-    employeeId: "EMP-0001",
-    date: t(-4),
-    scheduledStart: "9:00 AM",
-    scheduledEnd: "5:00 PM",
-    clockIn: "8:58 AM",
-    status: "Incomplete",
-    notes: "Clock-out was not recorded.",
-  },
-  {
-    id: "att-priya",
-    employeeId: "EMP-0003",
-    date: t(0),
-    scheduledStart: "10:00 AM",
-    scheduledEnd: "6:00 PM",
-    clockIn: "10:18 AM",
-    status: "Late",
-  },
-  {
-    id: "att-alex",
-    employeeId: "EMP-0004",
-    date: t(0),
-    scheduledStart: "7:00 AM",
-    scheduledEnd: "3:00 PM",
-    clockIn: "6:52 AM",
-    status: "Incomplete",
-    notes: "Still clocked in. Clock-out missing.",
-  },
-  {
-    id: "att-jordan",
-    employeeId: "EMP-0002",
-    date: t(0),
-    scheduledStart: "8:00 AM",
-    scheduledEnd: "4:00 PM",
-    clockIn: "7:56 AM",
-    status: "On time",
-  },
-];
-
-export const swaps: SwapRequest[] = [
-  {
-    id: "sw-1",
-    fromEmployeeId: "EMP-0001",
-    toEmployeeId: "EMP-0002",
-    shiftId: "sh-maya-tom",
-    submitted: t(-1),
-    reason: "Dental appointment in the afternoon.",
-    status: "Awaiting approval",
-  },
-  {
-    id: "sw-2",
-    fromEmployeeId: "EMP-0003",
-    toEmployeeId: "EMP-0001",
-    shiftId: "sh-priya-today",
-    submitted: t(-3),
-    status: "Approved",
-  },
-  {
-    id: "sw-3",
-    fromEmployeeId: "EMP-0004",
-    toEmployeeId: "EMP-0002",
-    shiftId: "sh-alex-today",
-    submitted: t(-2),
-    reason: "Family visit.",
-    status: "Declined",
-  },
-  {
-    id: "sw-4",
-    fromEmployeeId: "EMP-0001",
-    toEmployeeId: "EMP-0005",
-    shiftId: "sh-maya-wed",
-    submitted: t(-5),
-    status: "Unavailable",
-  },
-];
-
-export const announcements: Announcement[] = [
-  {
-    id: "an-1",
-    title: "Updated opening checklist",
-    excerpt: "Pastry restock now happens before 10:00 AM on weekday opens.",
-    body: "Starting this week, the pastry case should be fully restocked before 10:00 AM on weekday opening shifts.\n\nPlease complete the fridge temperature log before the first customer order. If a product is running low, add it to the kitchen board rather than waiting until close.\n\nThank you for keeping the morning service calm and consistent.",
-    publishedAt: `${t(-1)} · 4:20 PM`,
-    publisher: "Management",
-    priority: "Important",
-    status: "Published",
-    audience: "All employees",
-    pinned: true,
-    unread: true,
-  },
-  {
-    id: "an-2",
-    title: "Friday close early",
-    excerpt: "The café will close at 4:00 PM this Friday for equipment service.",
-    body: "This Friday we will close at 4:00 PM for espresso machine service. Afternoon shifts will finish at the posted time. Please remind guests after 3:00 PM.\n\nUpdated close tasks will appear on the kitchen board Thursday evening.",
-    publishedAt: `${t(-3)} · 9:05 AM`,
-    publisher: "Management",
-    priority: "Normal",
-    status: "Published",
-    audience: "All employees",
-    unread: false,
-  },
-  {
-    id: "an-3",
-    title: "Holiday week coverage",
-    excerpt: "Draft coverage for next week is ready for review.",
-    body: "The draft schedule for holiday week is ready. Please review your availability with Elena before Thursday if you need a change.",
-    publishedAt: `${t(0)} · Draft`,
-    publisher: "Elena Voss",
-    priority: "Normal",
-    status: "Draft",
-    audience: "All employees",
-  },
-];
-
-export const notifications: AppNotification[] = [
-  {
-    id: "n-1",
-    title: "Schedule published",
-    body: "This week’s schedule is now visible.",
-    time: "Today · 8:12 AM",
-    type: "schedule",
-    unread: true,
-  },
-  {
-    id: "n-2",
-    title: "Shift updated",
-    body: "Wednesday finish time changed to 3:00 PM.",
-    time: "Yesterday · 6:40 PM",
-    type: "schedule",
-    unread: true,
-  },
-  {
-    id: "n-3",
-    title: "Swap awaiting review",
-    body: "Your request with Jordan Hale is with Elena.",
-    time: "Yesterday · 2:15 PM",
-    type: "swap",
-    unread: false,
-  },
-  {
-    id: "n-4",
-    title: "Important announcement",
-    body: "Updated opening checklist is now posted.",
-    time: "Yesterday · 4:21 PM",
-    type: "announcement",
-    unread: true,
-  },
-  {
-    id: "n-5",
-    title: "Clock-out needs attention",
-    body: "Thursday’s record is missing a clock-out time.",
-    time: "Thu · 6:02 PM",
-    type: "attendance",
-    unread: false,
-  },
-];
-
-export function fullName(employee: Employee) {
-  return `${employee.firstName} ${employee.lastName}`;
+export function fullName(employee: Nameable | null | undefined): string {
+  if (!employee) return "Unknown";
+  if (employee.displayName) return employee.displayName;
+  return `${employee.firstName ?? ""} ${employee.lastName ?? ""}`.trim() || "Unknown";
 }
 
-export function findEmployee(id: string) {
-  return employees.find((e) => e.id === id);
+/** Standard initials for avatars, e.g. "Maya Chen" -> "MC". */
+export function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const first = parts[0]?.[0] ?? "";
+  const last = parts.length > 1 ? parts[parts.length - 1][0] : "";
+  return `${first}${last}`.toUpperCase();
+}
+
+const ACCENTS = ["#4F63E9", "#8061D9", "#3778D6", "#159A70", "#D99016", "#DC4C58", "#3647BD"];
+/** Deterministic avatar accent from a stable id (e.g. an employee id). */
+export function accentFor(id: string): string {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+  return ACCENTS[Math.abs(h) % ACCENTS.length];
+}
+
+const pad = (n: number) => String(n).padStart(2, "0");
+
+/** Format a Date as "9:00 AM" in local device time (display only). */
+export function formatTime(d: Date | null | undefined): string {
+  if (!d) return "—";
+  let hours = d.getHours();
+  const minutes = pad(d.getMinutes());
+  const ampm = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12 || 12;
+  return `${hours}:${minutes} ${ampm}`;
+}
+
+/** ISO date (yyyy-mm-dd) in local time. */
+export function isoDateOf(d: Date | null | undefined): string {
+  if (!d) return "";
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }

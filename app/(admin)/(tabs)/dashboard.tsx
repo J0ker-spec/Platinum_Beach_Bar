@@ -1,4 +1,4 @@
-import { findEmployee, fullName } from "@/src/data";
+import { fullName } from "@/src/data";
 import { greeting, isoDate, todayLabel } from "@/src/dates";
 import { useStore } from "@/src/store";
 import { BUSINESS_NAME, WORKPLACE_ADDRESS, colors, type } from "@/src/theme";
@@ -10,7 +10,7 @@ import { Text, View } from "react-native";
 
 export default function AdminDashboard() {
   const router = useRouter();
-  const { employees, shifts, attendance, swaps, notifications } = useStore();
+  const { employees, shifts, attendance, swaps, notifications, registrations, getEmployee: findEmployee } = useStore();
   const today = isoDate();
   const todayShifts = shifts.filter((s) => s.date === today);
   const clocked = attendance.filter((a) => a.date === today && a.clockIn && !a.clockOut || a.status === "On time" && a.date === today);
@@ -33,7 +33,7 @@ export default function AdminDashboard() {
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
         <StatCard label="Scheduled today" value={todayShifts.length} icon={CalendarPlus} />
         <StatCard label="Clocked in" value={Math.max(clocked.length, 2)} icon={ClipboardCheck} />
-        <StatCard label="Late arrivals" value={late.length} icon={ClipboardCheck} />
+        <StatCard label="Pending staff" value={registrations.length} icon={UserPlus} />
         <StatCard label="Pending swaps" value={pending.length} icon={Megaphone} />
       </View>
 
@@ -83,9 +83,36 @@ export default function AdminDashboard() {
         })}
       </View>
 
-      <SectionHeader title="Needs attention" action="View all" onAction={() => router.push("/(admin)/swaps")} />
-      <Card style={{ backgroundColor: colors.warningSoft, borderColor: "#F3E0B8" }}>
-        <Text style={[type.card, { color: colors.text }]}>{pending.length} shift-swap request{pending.length === 1 ? "" : "s"} awaiting review</Text>
+      <SectionHeader
+        title="Needs attention"
+        action="View all"
+        onAction={() => router.push(registrations.length > 0 ? "/(admin)/pending-approvals" : "/(admin)/swaps")}
+      />
+      {registrations.length > 0 && (
+        <Card
+          style={{ backgroundColor: colors.warningSoft, borderColor: "#F3E0B8", marginBottom: 10 }}
+          onPress={() => router.push("/(admin)/pending-approvals")}
+        >
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+            <View style={{ flex: 1, paddingRight: 8 }}>
+              <Text style={[type.card, { color: colors.text }]}>
+                {registrations.length} account registration{registrations.length === 1 ? "" : "s"} awaiting approval
+              </Text>
+              <Text style={[type.meta, { color: colors.textSecondary, marginTop: 4 }]}>
+                Tap to review and approve new staff access
+              </Text>
+            </View>
+            <StatusBadge label="Review" tone="warning" />
+          </View>
+        </Card>
+      )}
+      <Card
+        style={{ backgroundColor: pending.length > 0 ? colors.warningSoft : colors.surface, borderColor: pending.length > 0 ? "#F3E0B8" : colors.border }}
+        onPress={() => router.push("/(admin)/swaps")}
+      >
+        <Text style={[type.card, { color: colors.text }]}>
+          {pending.length} shift-swap request{pending.length === 1 ? "" : "s"} awaiting review
+        </Text>
         <Text style={[type.meta, { color: colors.textSecondary, marginTop: 4 }]}>
           {missing.length} missing clock-out · Draft holiday coverage still unpublished
         </Text>

@@ -1,4 +1,4 @@
-import { findEmployee, fullName } from "@/src/data";
+import { fullName } from "@/src/data";
 import { formatFull, formatPretty } from "@/src/dates";
 import { useStore } from "@/src/store";
 import { colors, type } from "@/src/theme";
@@ -14,7 +14,7 @@ const tabs = ["Pending", "Approved", "Declined"];
 
 export default function Swaps() {
   const router = useRouter();
-  const { swaps, shifts, updateSwap, setSnack } = useStore();
+  const { swaps, shifts, updateSwap, setSnack, getEmployee: findEmployee } = useStore();
   const [tab, setTab] = useState("Pending");
   const [openId, setOpenId] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<"approve" | "decline" | null>(null);

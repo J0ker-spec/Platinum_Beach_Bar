@@ -1,4 +1,3 @@
-import { findEmployee } from "@/src/data";
 import { isoDate, todayLabel } from "@/src/dates";
 import { useStore } from "@/src/store";
 import { colors, type } from "@/src/theme";
@@ -9,7 +8,7 @@ import { Text, View } from "react-native";
 
 export default function AttendanceHome() {
   const router = useRouter();
-  const { userId, shifts, clockedIn, lastClockIn, attendance } = useStore();
+  const { userId, shifts, clockedIn, lastClockIn, attendance, getEmployee: findEmployee } = useStore();
   const me = findEmployee(userId ?? "EMP-0001")!;
   const todayShift = shifts.find((s) => s.employeeId === me.id && s.date === isoDate());
   const mine = attendance.filter((a) => a.employeeId === me.id);

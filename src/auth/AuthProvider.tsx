@@ -16,7 +16,7 @@ import {
   updateProfile,
   type User,
 } from "firebase/auth";
-import { doc, getDoc, onSnapshot, serverTimestamp, writeBatch } from "firebase/firestore";
+import { doc, getDoc, onSnapshot, serverTimestamp, setDoc, writeBatch } from "firebase/firestore";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Platform } from "react-native";
 
@@ -40,6 +40,7 @@ export type AuthStatus =
   | "signedOut"
   | "checking" // verifying authorization / linking account
   | "unverified" // email/password account whose email address has not been verified yet
+  | "pendingApproval" // email verified, but no administrator has approved + assigned a role yet
   | "ready"
   | "unauthorized" // Google account has no employee authorization
   | "alreadyLinked" // authorization claimed by a different Google account
@@ -159,9 +160,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       if (!user.emailVerified) {
+        await reload(user).catch(() => undefined);
+      }
+      if (!user.emailVerified) {
         setStatus("unverified");
         return;
       }
+      await user.getIdToken(true).catch(() => undefined);
       const emailKey = user.email.toLowerCase();
       let link = await getDoc(doc(db, C.userLinks, user.uid));
 
@@ -169,22 +174,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // First sign-in: the account must be pre-authorized by an administrator.
         const authRef = doc(db, C.authorizations, emailKey);
         const authSnap = await getDoc(authRef);
-        if (!authSnap.exists()) {
-          setStatus("unauthorized");
-          return;
-        }
-        const a = authSnap.data();
-        if (a.claimedByUid && a.claimedByUid !== user.uid) {
+        if (authSnap.exists() && authSnap.data()?.claimedByUid && authSnap.data()?.claimedByUid !== user.uid) {
           setStatus("alreadyLinked");
           return;
         }
-        if (!a.claimedByUid) {
+        if (authSnap.exists() && !authSnap.data()?.claimedByUid) {
           const batch = writeBatch(db);
-          batch.set(doc(db, C.userLinks, user.uid), { employeeId: a.employeeId, linkedAt: serverTimestamp() });
+          batch.set(doc(db, C.userLinks, user.uid), { employeeId: authSnap.data()!.employeeId, linkedAt: serverTimestamp() });
           batch.update(authRef, { claimedByUid: user.uid, claimedAt: serverTimestamp() });
           await batch.commit(); // rules re-verify everything server-side
+          link = await getDoc(doc(db, C.userLinks, user.uid));
+        } else {
+          // Email verified but no authorization yet: register for administrator approval.
+          // Doc id = auth uid, so a user can only have one pending registration (create-once).
+          await setDoc(
+            doc(db, C.registrations, user.uid),
+            {
+              email: emailKey,
+              name: user.displayName ?? user.email ?? "",
+              status: "pending",
+              createdAt: serverTimestamp(),
+            },
+            { merge: true }
+          ).catch((e) => {
+            console.warn("Could not write registration document:", e);
+          });
+          setStatus("pendingApproval");
+          return;
         }
-        link = await getDoc(doc(db, C.userLinks, user.uid));
       }
 
       const employeeId = link.data()?.employeeId as string;
@@ -238,6 +255,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
       if (name.trim()) await updateProfile(cred.user, { displayName: name.trim() });
+      await setDoc(
+        doc(db, C.registrations, cred.user.uid),
+        {
+          email: email.trim().toLowerCase(),
+          name: name.trim() || email.trim(),
+          status: "pending",
+          createdAt: serverTimestamp(),
+        },
+        { merge: true }
+      ).catch((e) => console.warn("Failed to store pending registration at signup:", e));
       await sendEmailVerification(cred.user).catch(() => undefined); // can be re-sent from the verify screen
       return true;
     } catch (e: any) {

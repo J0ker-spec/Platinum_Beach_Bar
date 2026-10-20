@@ -21,6 +21,7 @@ export default function VerifyEmail() {
     if (status === "signedOut") router.replace("/(auth)/signup");
     // Verified, but not (yet) authorized / deactivated / failed: the login screen explains why.
     if (["unauthorized", "alreadyLinked", "deactivated", "error"].includes(status)) router.replace("/(auth)/login");
+    if (status === "pendingApproval") router.replace("/(auth)/pending-approval");
   }, [status, router]);
 
   const check = async () => {

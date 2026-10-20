@@ -1,20 +1,21 @@
 import { useAuth } from "@/src/auth/AuthProvider";
-import { findEmployee, fullName } from "@/src/data";
+import { fullName } from "@/src/data";
 import { useStore } from "@/src/store";
 import { APP_NAME, BUSINESS_NAME, colors, type } from "@/src/theme";
 import { Avatar, Card, Dialog, Screen, SettingRow } from "@/src/ui";
-import { ArrowLeftRight, Building2, CircleHelp, Info, LogOut, Megaphone, QrCode, UserRound, Bell } from "lucide-react-native";
+import { ArrowLeftRight, Building2, CircleHelp, Info, LogOut, Megaphone, QrCode, UserPlus, UserRound, Bell } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Text, View } from "react-native";
 
 export default function More() {
   const router = useRouter();
-  const { userId, signOut, setSnack } = useStore();
+  const { userId, signOut, setSnack, getEmployee: findEmployee, registrations, swaps } = useStore();
   const { signOut: authSignOut } = useAuth();
   const soon = (m: string) => () => setSnack({ message: m, tone: "info" });
   const me = findEmployee(userId ?? "ADM-0001")!;
   const [out, setOut] = useState(false);
+  const pendingSwaps = swaps.filter((s) => s.status === "Awaiting approval");
 
   return (
     <Screen scroll>
@@ -29,7 +30,18 @@ export default function More() {
         </View>
       </Card>
       <Card style={{ marginTop: 16 }}>
-        <SettingRow icon={ArrowLeftRight} label="Shift-swap approvals" onPress={() => router.push("/(admin)/swaps")} />
+        <SettingRow
+          icon={UserPlus}
+          label="Pending employee approvals"
+          value={registrations.length > 0 ? `${registrations.length} new` : undefined}
+          onPress={() => router.push("/(admin)/pending-approvals")}
+        />
+        <SettingRow
+          icon={ArrowLeftRight}
+          label="Shift-swap approvals"
+          value={pendingSwaps.length > 0 ? `${pendingSwaps.length} pending` : undefined}
+          onPress={() => router.push("/(admin)/swaps")}
+        />
         <SettingRow icon={Megaphone} label="Announcements" onPress={() => router.push("/(admin)/announcements")} />
         <SettingRow icon={QrCode} label="Workplace QR code" onPress={() => router.push("/(admin)/qr")} />
         <SettingRow icon={Building2} label="Business details" onPress={() => router.push("/(admin)/business")} />

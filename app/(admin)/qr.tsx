@@ -5,37 +5,32 @@ import { AlertTriangle, QrCode } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Text, View } from "react-native";
+import QRCode from "react-native-qrcode-svg";
 
-function QrPlaceholder({ size, seed }: { size: number; seed: number }) {
-  const n = 11;
-  const cell = size / n;
-  const on = (r: number, c: number) => {
-    const corner = (r < 3 && c < 3) || (r < 3 && c >= n - 3) || (r >= n - 3 && c < 3);
-    return corner || ((r * 7 + c * 13 + seed) % 3 === 0);
-  };
-  return (
-    <View style={{ width: size, height: size, flexDirection: "row", flexWrap: "wrap" }}>
-      {Array.from({ length: n * n }, (_, i) => (
-        <View key={i} style={{ width: cell, height: cell, backgroundColor: on(Math.floor(i / n), i % n) ? colors.text : "transparent" }} />
-      ))}
-    </View>
-  );
+function QrCodeView({ size, payload }: { size: number; payload: string | null }) {
+  if (!payload) {
+    return (
+      <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
+        <Text style={[type.meta, { color: colors.textSecondary, textAlign: "center" }]}>No code yet. Tap “Replace QR code” to create one.</Text>
+      </View>
+    );
+  }
+  return <QRCode value={payload} size={size} color={colors.text} backgroundColor="#fff" ecl="M" />;
 }
 
 export default function Qr() {
   const router = useRouter();
-  const { qrLabel, replaceQr } = useStore();
+  const { qrLabel, qrPayload, replaceQr, setSnack } = useStore();
   const [big, setBig] = useState(false);
   const [confirm, setConfirm] = useState(false);
-  const replaced = qrLabel === "Replacement code preview";
 
   return (
     <Screen scroll>
       <BackHeader title="Workplace QR code" onBack={() => router.back()} />
       <Card style={{ alignItems: "center", gap: 10 }}>
-        <StatusBadge label={replaced ? "Replacement code preview" : "Illustrative only"} tone={replaced ? "success" : "neutral"} />
+        <StatusBadge label={qrPayload ? "Live code" : "Not created"} tone={qrPayload ? "success" : "neutral"} />
         <View style={{ padding: 16, backgroundColor: "#fff", borderRadius: 16, borderWidth: 1, borderColor: colors.border }}>
-          <QrPlaceholder size={220} seed={replaced ? 5 : 2} />
+          <QrCodeView size={220} payload={qrPayload} />
         </View>
         <Text style={[type.card, { color: colors.text }]}>{BUSINESS_NAME}</Text>
         <Text style={[type.meta, { color: colors.textSecondary }]}>{qrLabel}</Text>
@@ -58,7 +53,7 @@ export default function Qr() {
 
       <Sheet visible={big} onClose={() => setBig(false)}>
         <View style={{ alignItems: "center", gap: 12 }}>
-          <QrPlaceholder size={260} seed={replaced ? 5 : 2} />
+          <QrCodeView size={260} payload={qrPayload} />
           <Text style={[type.card, { color: colors.text }]}>{BUSINESS_NAME}</Text>
           <Button label="Close" variant="secondary" onPress={() => setBig(false)} />
         </View>
@@ -68,11 +63,11 @@ export default function Qr() {
         tone="warning"
         icon={AlertTriangle}
         title="Replace QR code?"
-        body="The current code would stop working and employees would need to scan the new one. Preview only — nothing is revoked."
+        body="The current code would stop working and employees would need to scan the new one. "
         primary="Replace code"
         secondary="Cancel"
         onSecondary={() => setConfirm(false)}
-        onPrimary={() => { setConfirm(false); replaceQr(); }}
+        onPrimary={() => { setConfirm(false); replaceQr().catch(() => setSnack({ message: "Could not replace the code. Check your connection.", tone: "warning" })); }}
       />
     </Screen>
   );

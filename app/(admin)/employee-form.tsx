@@ -1,4 +1,3 @@
-import { findEmployee } from "@/src/data";
 import { useStore } from "@/src/store";
 import { colors, type } from "@/src/theme";
 import { BackHeader, Button, FilterChip, Screen, TextField } from "@/src/ui";
@@ -10,7 +9,7 @@ import { Text, View } from "react-native";
 export default function EmployeeForm() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id?: string }>();
-  const { employees, upsertEmployee, setSnack } = useStore();
+  const { employees, upsertEmployee, setSnack, getEmployee: findEmployee } = useStore();
   const existing = id ? findEmployee(String(id)) : undefined;
   const nextId = `EMP-${String(employees.filter((e) => !e.isAdmin).length + 8).padStart(4, "0")}`;
   const [name, setName] = useState(existing ? `${existing.firstName} ${existing.lastName}` : "");
