@@ -20,24 +20,26 @@ export default function AdminAttendance() {
   const [saving, setSaving] = useState(false);
   const today = workplaceToday(workplaceTimezone);
   const todayShifts = shifts.filter((shift) => shift.date === today && (shift.status === "Published" || shift.status === "Updated"));
-  const clockedIds = new Set(attendance
-    .filter((record) => record.date === today && record.clockIn && record.clockIn !== "—" && (!record.clockOut || record.clockOut === "—"))
-    .map((record) => record.employeeId));
+  const presentToday = attendance.filter((record) => record.date === today && record.clockIn && record.clockIn !== "—");
+  const presentIds = new Set(presentToday.map((record) => record.employeeId));
   const scheduledIds = new Set(todayShifts.map((shift) => shift.employeeId));
-  const notClockedIn = [...scheduledIds].filter((id) => !clockedIds.has(id)).length;
+  // "Not in" counts employees with no clock-in today at all — someone who already clocked out is
+  // not missing.
+  const notClockedIn = [...scheduledIds].filter((id) => !presentIds.has(id)).length;
   const rows = attendance.filter((row) => {
     const employee = findEmployee(row.employeeId);
-    const matches = `${fullName(employee!)} ${row.employeeId}`.toLowerCase().includes(query.toLowerCase());
+    const matches = `${fullName(employee)} ${row.employeeId}`.toLowerCase().includes(query.toLowerCase());
     return matches && (filter === "All" || row.status === filter);
   });
   const current = attendance.find((a) => a.id === open);
+  const currentEmployee = current ? findEmployee(current.employeeId) : undefined;
 
   return (
     <Screen scroll>
       <Text style={[type.title, { color: colors.text }]}>Attendance</Text>
-      <Text style={[type.meta, { color: colors.textSecondary }]}>Reviewing {today}</Text>
+      <Text style={[type.meta, { color: colors.textSecondary }]}>All records · today is {today}</Text>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10, marginVertical: 12 }}>
-        <StatCard label="Present" value={attendance.filter((a) => a.date === today && a.clockIn && a.clockIn !== "—").length} icon={ClipboardList} />
+        <StatCard label="Present" value={presentIds.size} icon={ClipboardList} />
         <StatCard label="Late" value={attendance.filter((a) => a.date === today && a.status === "Late").length} icon={ClipboardList} />
         <StatCard label="Not in" value={notClockedIn} icon={ClipboardList} />
         <StatCard label="Missing out" value={attendance.filter((a) => a.date === today && a.status === "Incomplete").length} icon={ClipboardList} />
@@ -51,7 +53,7 @@ export default function AdminAttendance() {
       {rows.length ? (
         <View style={{ gap: 10 }}>
           {rows.map((row) => {
-            const employee = findEmployee(row.employeeId)!;
+            const employee = findEmployee(row.employeeId);
             return (
               <Pressable
                 key={row.id}
@@ -65,12 +67,12 @@ export default function AdminAttendance() {
                 style={{ backgroundColor: colors.card, borderRadius: 18, borderWidth: 1, borderColor: colors.border, padding: 14 }}
               >
                 <View style={{ flexDirection: "row", gap: 10 }}>
-                  <Avatar initials={employee.initials} color={employee.accent} />
+                  <Avatar initials={employee?.initials ?? "?"} color={employee?.accent} />
                   <View style={{ flex: 1 }}>
-                    <Text style={[type.card, { color: colors.text }]}>{fullName(employee)}</Text>
-                    <Text style={[type.tiny, { color: colors.muted }]}>{employee.id}</Text>
+                    <Text style={[type.card, { color: colors.text }]}>{employee ? fullName(employee) : row.employeeId}</Text>
+                    <Text style={[type.tiny, { color: colors.muted }]}>{row.employeeId}</Text>
                     <Text style={[type.meta, { color: colors.textSecondary }]}>
-                      {row.scheduledStart}–{row.scheduledEnd} · In {row.clockIn ?? "—"} · Out {row.clockOut ?? "missing"}
+                      {row.scheduledStart}–{row.scheduledEnd} · In {row.clockIn || "—"} · Out {row.clockOut || "missing"}
                     </Text>
                   </View>
                   <StatusBadge label={row.status === "Incomplete" ? "Clock-out missing" : row.status} tone={badgeTone(row.status)} />
@@ -86,7 +88,7 @@ export default function AdminAttendance() {
       <Sheet visible={!!current} onClose={() => setOpen(null)}>
         {current ? (
           <>
-            <Text style={[type.section, { color: colors.text }]}>{fullName(findEmployee(current.employeeId)!)}</Text>
+            <Text style={[type.section, { color: colors.text }]}>{currentEmployee ? fullName(currentEmployee) : current.employeeId}</Text>
             <Text style={[type.meta, { color: colors.muted }]}>{current.employeeId} · {current.date}</Text>
             <Text style={[type.body, { color: colors.text }]}>Scheduled {current.scheduledStart} – {current.scheduledEnd}</Text>
             <Text style={[type.body, { color: colors.text }]}>Recorded in {current.clockIn ?? "—"} / out {current.clockOut ?? "—"}</Text>

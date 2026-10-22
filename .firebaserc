@@ -1,1 +1,6 @@
-{ "projects": { "default": "demo-shiftline", "platnumx": "platnumx" } }
+{
+  "projects": {
+    "default": "demo-shiftline",
+    "platnumx": "platnumx"
+  }
+}

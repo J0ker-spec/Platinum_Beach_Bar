@@ -1,7 +1,7 @@
 import { Employee, Shift } from "@/src/types";
 import { colors, radii, spacing, type } from "@/src/theme";
 import { formatShortDay } from "@/src/dates";
-import { fullName } from "@/src/data";
+import { fullName, isoDateOf } from "@/src/data";
 import { Avatar, Card, StatusBadge } from "@/src/ui";
 import { Bell, ChevronRight, Clock } from "lucide-react-native";
 import React from "react";
@@ -99,7 +99,7 @@ export function ShiftCard({
             {shift.start} – {shift.end}
           </Text>
           <Text style={[type.meta, { color: colors.textSecondary }]}>
-            {shift.label} · {shift.location}
+            {shift.location ? `${shift.label} · ${shift.location}` : shift.label}
           </Text>
           <View style={{ flexDirection: "row", gap: 8, alignItems: "center", marginTop: 4 }}>
             <Clock size={14} color={colors.muted} />
@@ -117,18 +117,21 @@ export function WeekStrip({
   selected,
   marked,
   onSelect,
+  today,
 }: {
   dates: string[];
   selected: string;
   marked: string[];
   onSelect: (date: string) => void;
+  /** Workplace-local today (yyyy-mm-dd). Falls back to the device date. */
+  today?: string;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const todayIso = today ?? isoDateOf(new Date());
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
       {dates.map((date) => {
         const active = date === selected;
-        const isToday = date === today;
+        const isToday = date === todayIso;
         return (
           <Pressable
             key={date}

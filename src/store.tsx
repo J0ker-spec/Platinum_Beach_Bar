@@ -4,7 +4,15 @@ import { db } from "@/src/firebase/client";
 import { C } from "@/src/firebase/paths";
 import { encodeQr, newQrToken } from "@/src/lib/qr";
 import { formatWorkplaceTime, isValidIsoDate, isValidTimeZone, shiftInterval, workplaceDateTime, workplaceIsoDate } from "@/src/lib/time";
-import { accentFor, initials, isSwappableShift } from "@/src/data";
+import {
+  DEFAULT_CLOCK_IN_EARLY_MINUTES,
+  DEFAULT_CLOCK_IN_LATE_MINUTES,
+  assertNoShiftOverlap,
+  attendanceStatus,
+  isLateClockIn,
+  pickOpenAttendance,
+} from "@/src/lib/scheduling";
+import { accentFor, fullName, initials, isSwappableShift } from "@/src/data";
 import { BUSINESS_NAME, WORKPLACE_ADDRESS } from "@/src/theme";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type {
@@ -108,7 +116,7 @@ function toShift(id: string, d: any): Shift {
     end: formatWorkplaceTime(endAt, liveWorkplaceTimeZone),
     breakMinutes: d.breakMinutes ?? 0,
     label: d.label ?? "",
-    location: d.notes ?? "",
+    location: d.location ?? "",
     notes: d.notes ?? "",
     status: d.changedAfterPublish && d.status === "published" ? "Updated" : shiftStatusLabel(d.status),
     startAt: startAt.getTime(),
@@ -142,11 +150,17 @@ function toAttendance(id: string, d: any): AttendanceRecord {
   // A null timestamp means a server timestamp still pending locally: treat as "now".
   const clockIn = d.clockInAt?.toDate ? d.clockInAt.toDate() : undefined;
   const clockOut = d.clockOutAt?.toDate ? d.clockOutAt.toDate() : undefined;
-  let status: AttendanceRecord["status"] = "Scheduled";
-  if (d.lastCorrectionId) status = "Corrected";
-  else if (d.reviewStatus === "pending_review" || (clockIn && !clockOut && shift?.endAt && shift.endAt <= Date.now())) status = "Incomplete";
-  else if (d.reviewStatus === "confirmed") status = d.late ? "Late" : "On time";
-  else if (d.reviewStatus === "rejected") status = "Late";
+  const status = attendanceStatus(
+    {
+      lastCorrectionId: d.lastCorrectionId,
+      reviewStatus: d.reviewStatus,
+      clockInAt: clockIn?.getTime(),
+      clockOutAt: clockOut?.getTime(),
+      late: d.late === true,
+    },
+    shift,
+    Date.now()
+  );
   return {
     id,
     employeeId: d.employeeId ?? "",
@@ -187,26 +201,18 @@ function expiresAtDays(days: number): Timestamp {
   return Timestamp.fromMillis(Date.now() + days * 86_400_000 + 1800_000);
 }
 
-function assertNoShiftOverlap(
-  shifts: Shift[],
-  employeeId: string,
-  startAt: number,
-  endAt: number,
-  excludedIds: string[] = []
-): void {
-  const overlap = shifts.find(
-    (shift) =>
-      shift.employeeId === employeeId &&
-      shift.status !== "Cancelled" &&
-      !excludedIds.includes(shift.id) &&
-      typeof shift.startAt === "number" &&
-      typeof shift.endAt === "number" &&
-      startAt < shift.endAt &&
-      endAt > shift.startAt
-  );
-  if (overlap) {
-    throw new Error(`This employee already has a shift that overlaps ${overlap.date}.`);
+/** Turn Firestore write failures into messages an administrator can act on. */
+function writeError(error: unknown, fallback: string): Error {
+  const code = (error as { code?: string } | null)?.code;
+  if (code === "permission-denied") {
+    return new Error(
+      "The workplace database rejected this change. The record may have been changed elsewhere — refresh and try again."
+    );
   }
+  if (code === "unavailable" || code === "deadline-exceeded") {
+    return new Error("The server couldn't be reached. Check your connection and try again.");
+  }
+  return error instanceof Error ? error : new Error(fallback);
 }
 
 type Store = {
@@ -229,6 +235,10 @@ type Store = {
   /** Non-null when one of the Firestore listeners failed (e.g. missing index / rules). */
   listenerError: string | null;
   workplaceTimezone: string;
+  /** Minutes before a shift start when an online clock-in becomes possible (mirrors firestore.rules). */
+  clockInEarlyMinutes: number;
+  /** Minutes after a shift start when an online clock-in stops being possible (mirrors firestore.rules). */
+  clockInLateMinutes: number;
   businessName: string;
   businessAddress: string;
   businessPhone: string;
@@ -250,6 +260,7 @@ type Store = {
   publishSchedule: (startDate: string, endDate: string, intendedShifts: { id: string; revision?: number }[]) => Promise<void>;
   publishAnnouncement: (item: Announcement) => Promise<void>;
   saveAnnouncementDraft: (item: Announcement) => Promise<void>;
+  deleteAnnouncement: (id: string) => Promise<void>;
   replaceQr: () => Promise<void>;
   markNotificationsRead: () => Promise<void>;
   correctAttendance: (id: string, clockIn: string, clockOut: string, reason: string) => Promise<void>;
@@ -290,6 +301,8 @@ export function PrototypeProvider({ children }: { children: React.ReactNode }) {
   const [snack, setSnack] = useState<Snack>(null);
   const [listenerError, setListenerError] = useState<string | null>(null);
   const [workplaceTimezone, setWorkplaceTimezone] = useState(defaultWorkplaceTimeZone);
+  const [clockInEarlyMinutes, setClockInEarlyMinutes] = useState(DEFAULT_CLOCK_IN_EARLY_MINUTES);
+  const [clockInLateMinutes, setClockInLateMinutes] = useState(DEFAULT_CLOCK_IN_LATE_MINUTES);
   const [businessDetails, setBusinessDetails] = useState(defaultBusinessDetails);
   const [retryKey, setRetryKey] = useState(0);
   const retry = useCallback(() => setRetryKey((k) => k + 1), []);
@@ -423,6 +436,8 @@ export function PrototypeProvider({ children }: { children: React.ReactNode }) {
       setListenerError(null);
       liveWorkplaceTimeZone = defaultWorkplaceTimeZone;
       setWorkplaceTimezone(defaultWorkplaceTimeZone);
+      setClockInEarlyMinutes(DEFAULT_CLOCK_IN_EARLY_MINUTES);
+      setClockInLateMinutes(DEFAULT_CLOCK_IN_LATE_MINUTES);
       setBusinessDetails(defaultBusinessDetails);
       return;
     }
@@ -446,6 +461,14 @@ export function PrototypeProvider({ children }: { children: React.ReactNode }) {
           });
           liveWorkplaceTimeZone = timeZone;
           setWorkplaceTimezone(timeZone);
+          const early = Number(saved.clockInEarlyMinutes);
+          const late = Number(saved.clockInLateMinutes);
+          setClockInEarlyMinutes(
+            Number.isInteger(early) && early >= 0 && early <= 240 ? early : DEFAULT_CLOCK_IN_EARLY_MINUTES
+          );
+          setClockInLateMinutes(
+            Number.isInteger(late) && late >= 0 && late <= 480 ? late : DEFAULT_CLOCK_IN_LATE_MINUTES
+          );
         },
         (error) => {
           console.warn("Workplace settings listener error:", error.code, error.message);
@@ -584,10 +607,12 @@ export function PrototypeProvider({ children }: { children: React.ReactNode }) {
 // ---------------------------------------------------------------- write helpers
   const upsertEmployee = useCallback(
     async (employee: Employee) => {
-      if (!myId) return;
+      if (!myId) throw new Error("Sign in is required to save employees.");
       const email = employee.email.trim().toLowerCase();
+      if (!email) throw new Error("Enter an email address for the employee.");
       if (employees.some((e) => e.id === employee.id)) {
-        // Edit existing employee (name/title/phone/status) + synced directory doc.
+        // Edit existing employee (name/title/phone/status) + synced directory doc. Email is
+        // intentionally not written: it keys employeeAuthorizations and cannot be changed here.
         const batch = writeBatch(db);
         batch.update(doc(db, C.employees, employee.id), {
           firstName: employee.firstName,
@@ -603,49 +628,61 @@ export function PrototypeProvider({ children }: { children: React.ReactNode }) {
           status: employee.status === "Active" ? "active" : "deactivated",
           role: employee.isAdmin ? "admin" : "employee",
         });
-        await batch.commit();
+        try {
+          await batch.commit();
+        } catch (error) {
+          throw writeError(error, "The employee could not be saved.");
+        }
         return;
       }
       // Create: sequential id per systemMeta/counters, plus the paired directory + authorization
       // docs the rules require. Uses a transaction so two concurrent admins cannot collide.
-      await runTransaction(db, async (tx) => {
-        const counterRef = doc(db, C.meta, "counters");
-        const counterSnap = await tx.get(counterRef);
-        const seq = (counterSnap.data()?.employeeSeq as number) ?? 1;
-        const id = `EMP-${pad4(seq + 1)}`;
-        tx.set(doc(db, C.employees, id), {
-          firstName: employee.firstName,
-          lastName: employee.lastName,
-          email,
-          phone: employee.phone,
-          title: employee.title,
-          role: "employee",
-          status: "active",
-          createdBy: myId,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
+      try {
+        await runTransaction(db, async (tx) => {
+          const counterRef = doc(db, C.meta, "counters");
+          const counterSnap = await tx.get(counterRef);
+          if (!counterSnap.exists()) {
+            throw new Error("Employee numbering is not set up yet. Add systemMeta/counters with employeeSeq first.");
+          }
+          const seq = (counterSnap.data()?.employeeSeq as number) ?? 0;
+          const id = `EMP-${pad4(seq + 1)}`;
+          tx.set(doc(db, C.employees, id), {
+            firstName: employee.firstName,
+            lastName: employee.lastName,
+            email,
+            phone: employee.phone,
+            title: employee.title,
+            role: "employee",
+            status: "active",
+            createdBy: myId,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+          tx.set(doc(db, C.directory, id), {
+            displayName: `${employee.firstName} ${employee.lastName}`.trim(),
+            title: employee.title,
+            status: "active",
+            role: "employee",
+          });
+          tx.set(doc(db, C.authorizations, email), {
+            employeeId: id,
+            claimedByUid: null,
+            createdBy: myId,
+            createdAt: serverTimestamp(),
+          });
+          tx.update(counterRef, { employeeSeq: seq + 1 });
         });
-        tx.set(doc(db, C.directory, id), {
-          displayName: `${employee.firstName} ${employee.lastName}`.trim(),
-          title: employee.title,
-          status: "active",
-          role: "employee",
-        });
-        tx.set(doc(db, C.authorizations, email), {
-          employeeId: id,
-          claimedByUid: null,
-          createdBy: myId,
-          createdAt: serverTimestamp(),
-        });
-        tx.update(counterRef, { employeeSeq: seq + 1 });
-      });
+      } catch (error) {
+        throw writeError(error, "The employee could not be created.");
+      }
     },
     [employees, myId]
   );
 
   const addShifts = useCallback(async (list: Shift[]) => {
     if (!myId) throw new Error("Sign in is required to create shifts.");
-    const pending: Shift[] = [];
+    if (!list.length) throw new Error("Add at least one shift.");
+    const prepared: { shift: Shift; startAt: Date; endAt: Date }[] = [];
     for (const shift of list) {
       if (!employees.some((employee) => employee.id === shift.employeeId && employee.status === "Active")) {
         throw new Error("Choose an active employee for every shift.");
@@ -658,32 +695,52 @@ export function PrototypeProvider({ children }: { children: React.ReactNode }) {
         throw new Error("The break must be shorter than the shift.");
       }
       assertNoShiftOverlap(shifts, shift.employeeId, startAt.getTime(), endAt.getTime());
-      assertNoShiftOverlap(pending, shift.employeeId, startAt.getTime(), endAt.getTime());
-      pending.push({ ...shift, startAt: startAt.getTime(), endAt: endAt.getTime() });
+      assertNoShiftOverlap(
+        prepared.map((item) => ({ ...item.shift, startAt: item.startAt.getTime(), endAt: item.endAt.getTime() })),
+        shift.employeeId,
+        startAt.getTime(),
+        endAt.getTime()
+      );
+      prepared.push({ shift, startAt, endAt });
     }
-    for (let i = 0; i < list.length; i += 400) {
-      const batch = writeBatch(db);
-      for (const shift of list.slice(i, i + 400)) {
-        const { startAt, endAt } = shiftInterval(shift.date, shift.start, shift.end, workplaceTimezone);
-        batch.set(doc(collection(db, C.shifts)), {
-          employeeId: shift.employeeId,
-          date: shift.date,
-          startAt,
-          endAt,
-          breakMinutes: shift.breakMinutes,
-          label: shift.label,
-          notes: shift.notes ?? "",
-          status: "draft",
-          createdBy: myId ?? "",
-          updatedBy: myId ?? "",
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-          revision: 1,
-          changedAfterPublish: false,
-        });
-      }
+    // Firestore caps document access calls per batched write (20). Every create reads the admin
+    // (cached) plus the assigned employee, so stay at 18 distinct employees and 400 writes.
+    let batch = writeBatch(db);
+    let employeesInBatch = new Set<string>();
+    let writesInBatch = 0;
+    const commit = async () => {
+      if (!writesInBatch) return;
       await batch.commit();
+      batch = writeBatch(db);
+      employeesInBatch = new Set<string>();
+      writesInBatch = 0;
+    };
+    for (const { shift, startAt, endAt } of prepared) {
+      const addsEmployee = !employeesInBatch.has(shift.employeeId);
+      if (writesInBatch > 0 && (writesInBatch >= 400 || (addsEmployee && employeesInBatch.size + 2 >= 20))) {
+        await commit();
+      }
+      batch.set(doc(collection(db, C.shifts)), {
+        employeeId: shift.employeeId,
+        date: shift.date,
+        startAt,
+        endAt,
+        breakMinutes: shift.breakMinutes,
+        label: shift.label,
+        location: shift.location ?? "",
+        notes: shift.notes ?? "",
+        status: "draft",
+        createdBy: myId,
+        updatedBy: myId,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        revision: 1,
+        changedAfterPublish: false,
+      });
+      employeesInBatch.add(shift.employeeId);
+      writesInBatch += 1;
     }
+    await commit();
   }, [employees, myId, shifts, workplaceTimezone]);
   const addShift = useCallback((shift: Shift) => addShifts([shift]), [addShifts]);
 
@@ -691,6 +748,7 @@ export function PrototypeProvider({ children }: { children: React.ReactNode }) {
     if (!myId) throw new Error("Sign in is required to edit a shift.");
     const current = shifts.find((item) => item.id === shift.id);
     if (!current) throw new Error("The shift is no longer available.");
+    if (current.status === "Cancelled") throw new Error("A cancelled shift can't be edited.");
     if (!employees.some((employee) => employee.id === shift.employeeId && employee.status === "Active")) {
       throw new Error("Choose an active employee for the shift.");
     }
@@ -702,8 +760,11 @@ export function PrototypeProvider({ children }: { children: React.ReactNode }) {
       throw new Error("The break must be shorter than the shift.");
     }
     assertNoShiftOverlap(shifts, shift.employeeId, startAt.getTime(), endAt.getTime(), [shift.id]);
-    const attendanceSnap = await getDoc(doc(db, C.attendance, `${shift.employeeId}_${shift.id}`));
-    if (attendanceSnap.exists()) {
+    // Attendance is keyed by {employeeId}_{shiftId}. Check the record of the employee who currently
+    // owns the shift as well as the new one, otherwise reassigning a shift hides its history.
+    const attendanceIds = [...new Set([current.employeeId, shift.employeeId])].map((id) => `${id}_${shift.id}`);
+    const attendanceSnaps = await Promise.all(attendanceIds.map((id) => getDoc(doc(db, C.attendance, id))));
+    if (attendanceSnaps.some((snapshot) => snapshot.exists())) {
       throw new Error("This shift has attendance records and can't be edited without changing its history.");
     }
     const batch = writeBatch(db);
@@ -714,8 +775,9 @@ export function PrototypeProvider({ children }: { children: React.ReactNode }) {
       endAt,
       breakMinutes: shift.breakMinutes,
       label: shift.label,
+      location: shift.location ?? "",
       notes: shift.notes ?? "",
-      status: current.status === "Cancelled" ? "cancelled" : current.status === "Draft" ? "draft" : "published",
+      status: current.status === "Draft" ? "draft" : "published",
       updatedBy: myId,
       updatedAt: serverTimestamp(),
       revision: (current.revision ?? 1) + 1,
@@ -752,7 +814,11 @@ export function PrototypeProvider({ children }: { children: React.ReactNode }) {
     }
     if (shift.status === "Cancelled") throw new Error("This shift is already cancelled.");
     if (shift.status === "Draft") {
-      await deleteDoc(shiftRef);
+      try {
+        await deleteDoc(shiftRef);
+      } catch (error) {
+        throw writeError(error, "The draft could not be deleted.");
+      }
       return "deleted";
     }
     const batch = writeBatch(db);
@@ -774,7 +840,11 @@ export function PrototypeProvider({ children }: { children: React.ReactNode }) {
       createdAt: serverTimestamp(),
       expiresAt: expiresAtDays(151),
     });
-    await batch.commit();
+    try {
+      await batch.commit();
+    } catch (error) {
+      throw writeError(error, "The shift could not be cancelled.");
+    }
     return "cancelled";
   }, [myId]);
 
@@ -826,8 +896,9 @@ export function PrototypeProvider({ children }: { children: React.ReactNode }) {
         commits.push(batch.commit());
       }
       const outcomes = await Promise.allSettled(commits);
-      if (outcomes.some((outcome) => outcome.status === "rejected")) {
-        throw new Error("Some shifts may have published. Refresh the schedule before retrying.");
+      const failed = outcomes.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+      if (failed) {
+        throw writeError(failed.reason, "Some shifts may have published. Refresh the schedule before retrying.");
       }
     }
     const recipients = [...new Set(selectedDrafts.map((shift) => shift.employeeId))];
@@ -864,29 +935,60 @@ export function PrototypeProvider({ children }: { children: React.ReactNode }) {
     }
     setSnack({ message: `Published ${selectedDrafts.length} shifts for ${startDate}–${endDate}`, tone: "success" });
   }, [myId, shifts]);
-const publishAnnouncement = useCallback(
+  /** Title/body/audience content shared by saving a draft and publishing it. */
+  const announcementContent = useCallback((item: Announcement) => {
+    const title = item.title.trim();
+    const body = item.body.trim();
+    const audience: "all" | "selected" = item.audience === "Selected employees" ? "selected" : "all";
+    const audienceIds = audience === "selected" ? [...new Set(item.audienceIds ?? [])] : [];
+    if (!title) throw new Error("Enter an announcement title.");
+    if (!body) throw new Error("Enter the announcement message.");
+    if (audience === "selected" && !audienceIds.length) throw new Error("Select at least one employee for this audience.");
+    return {
+      title,
+      body,
+      priority: item.priority === "Important" ? "important" : "normal",
+      audience,
+      audienceIds,
+    };
+  }, []);
+
+  const publishAnnouncement = useCallback(
     async (item: Announcement) => {
       if (!myId) throw new Error("Sign in is required to publish announcements.");
-      const annRef = doc(collection(db, C.announcements));
-      const audience: "all" | "selected" = item.audience === "Selected employees" ? "selected" : "all";
-      const audienceIds = audience === "selected" ? (item.audienceIds ?? []) : [];
-      const recipients = audience === "all" ? employees.filter((e) => e.status === "Active").map((e) => e.id) : audienceIds;
+      const content = announcementContent(item);
+      // Editing an existing draft publishes that same document instead of duplicating it.
+      const existing = item.id ? announcements.find((saved) => saved.id === item.id) : undefined;
+      const annRef = existing ? doc(db, C.announcements, existing.id) : doc(collection(db, C.announcements));
+      const recipients =
+        content.audience === "all"
+          ? employees.filter((employee) => employee.status === "Active").map((employee) => employee.id)
+          : content.audienceIds;
       const batch = writeBatch(db);
-      batch.set(annRef, {
-        title: item.title,
-        body: item.body,
-        priority: item.priority === "Important" ? "important" : "normal",
-        status: "published",
-        audience,
-        audienceIds,
-        publishedBy: myId,
-        createdAt: serverTimestamp(),
-        publishedAt: serverTimestamp(),
-      });
+      if (existing) {
+        const publishingNow = existing.status === "Draft";
+        batch.update(annRef, {
+          ...content,
+          status: "published",
+          // Keep the original publication time when an already-published notice is corrected.
+          ...(publishingNow ? { publishedAt: serverTimestamp() } : {}),
+        });
+      } else {
+        batch.set(annRef, {
+          ...content,
+          status: "published",
+          publishedBy: myId,
+          createdAt: serverTimestamp(),
+          publishedAt: serverTimestamp(),
+        });
+      }
+      // Only a first publication (or a draft being published) creates notifications; editing an
+      // already-published announcement must not notify the whole team again.
+      const shouldNotify = !existing || existing.status === "Draft";
       const createNotification = (recipientId: string) => ({
         recipientId,
         type: "announcement",
-        title: `${item.priority === "Important" ? "Important: " : "Announcement: "}${item.title}`.slice(0, 120),
+        title: `${content.priority === "important" ? "Important: " : "Announcement: "}${content.title}`.slice(0, 120),
         refType: "announcement",
         refId: annRef.id,
         read: false,
@@ -895,10 +997,20 @@ const publishAnnouncement = useCallback(
         expiresAt: expiresAtDays(151),
       });
       // Keep commits below Firestore's 500-write limit, including the announcement itself.
-      recipients.slice(0, 449).forEach((recipientId) => {
-        batch.set(doc(collection(db, C.notifications)), createNotification(recipientId));
-      });
-      await batch.commit();
+      if (shouldNotify) {
+        recipients.slice(0, 449).forEach((recipientId) => {
+          batch.set(doc(collection(db, C.notifications)), createNotification(recipientId));
+        });
+      }
+      try {
+        await batch.commit();
+      } catch (error) {
+        throw writeError(error, "The announcement could not be published.");
+      }
+      if (!shouldNotify) {
+        setSnack({ message: "Announcement updated", tone: "success" });
+        return;
+      }
       const notificationCommits: Promise<void>[] = [];
       for (let i = 449; i < recipients.length; i += 450) {
         const notificationBatch = writeBatch(db);
@@ -916,22 +1028,44 @@ const publishAnnouncement = useCallback(
       }
       setSnack({ message: "Announcement published", tone: "success" });
     },
-    [myId, employees]
+    [myId, employees, announcements, announcementContent]
   );
 
+  /** Creates a new draft or updates the existing draft with `item.id` (never duplicates it). */
   const saveAnnouncementDraft = useCallback(async (item: Announcement) => {
-    await addDoc(collection(db, C.announcements), {
-      title: item.title,
-      body: item.body,
-      priority: item.priority === "Important" ? "important" : "normal",
-      status: "draft",
-      audience: item.audience === "Selected employees" ? "selected" : "all",
-      audienceIds: item.audience === "Selected employees" ? (item.audienceIds ?? []) : [],
-      publishedBy: myId ?? "",
-      createdAt: serverTimestamp(),
-      publishedAt: serverTimestamp(),
-    });
+    if (!myId) throw new Error("Sign in is required to save announcements.");
+    const content = announcementContent(item);
+    const existing = item.id ? announcements.find((saved) => saved.id === item.id) : undefined;
+    try {
+      if (existing) {
+        if (existing.status !== "Draft") {
+          throw new Error("This announcement is already published and can no longer be saved as a draft.");
+        }
+        await updateDoc(doc(db, C.announcements, existing.id), { ...content, status: "draft" });
+        setSnack({ message: "Draft updated", tone: "success" });
+        return;
+      }
+      await addDoc(collection(db, C.announcements), {
+        ...content,
+        status: "draft",
+        publishedBy: myId,
+        createdAt: serverTimestamp(),
+        publishedAt: serverTimestamp(),
+      });
+    } catch (error) {
+      throw writeError(error, "The draft could not be saved.");
+    }
     setSnack({ message: "Draft saved", tone: "success" });
+  }, [myId, announcements, announcementContent]);
+
+  const deleteAnnouncement = useCallback(async (id: string) => {
+    if (!myId) throw new Error("Sign in is required to delete announcements.");
+    try {
+      await deleteDoc(doc(db, C.announcements, id));
+    } catch (error) {
+      throw writeError(error, "The announcement could not be deleted.");
+    }
+    setSnack({ message: "Announcement deleted", tone: "success" });
   }, [myId]);
 
   const replaceQr = useCallback(async () => {
@@ -944,15 +1078,22 @@ const publishAnnouncement = useCallback(
     } else {
       await setDoc(ref, { token, version: 1, rotatedBy: myId, rotatedAt: serverTimestamp() });
     }
-    setQrLabel("Replacement code preview");
+    setQrLabel("Current attendance code");
     setSnack({ message: snap.exists() ? "QR code replaced" : "QR code created", tone: "info" });
   }, [myId]);
 
   const markNotificationsRead = useCallback(async () => {
     const unread = notifications.filter((n) => n.unread).map((n) => n.id);
-    const batch = writeBatch(db);
-    for (const id of unread) batch.update(doc(db, C.notifications, id), { read: true });
-    if (unread.length) await batch.commit();
+    // Firestore allows 500 writes per batch; chunk so a long feed still clears.
+    for (let i = 0; i < unread.length; i += 400) {
+      const batch = writeBatch(db);
+      for (const id of unread.slice(i, i + 400)) batch.update(doc(db, C.notifications, id), { read: true });
+      try {
+        await batch.commit();
+      } catch (error) {
+        throw writeError(error, "Notifications couldn't be marked as read.");
+      }
+    }
   }, [notifications]);
 
   const correctAttendance = useCallback(
@@ -982,18 +1123,18 @@ const publishAnnouncement = useCallback(
         throw new Error("Clock-out must be later than clock-in.");
       }
       const correctionId = `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const reviewStatus = correctedIn
-        ? current.reviewStatus === "pending_review"
-          ? "confirmed"
-          : current.reviewStatus === "rejected"
-            ? "pending_review"
-            : "confirmed"
-        : "pending_review";
+      // An administrator who supplies a clock-in time has confirmed the record; clearing the time
+      // puts it back into the review queue.
+      const reviewStatus = correctedIn ? "confirmed" : "pending_review";
+      // Lateness is derived from the corrected clock-in against the scheduled start (the rules do
+      // not allow an employee to flag themselves late). A correction can therefore also clear it.
+      const scheduledStartAt = liveShiftsCache.find((shift) => shift.id === current.shiftId)?.startAt;
+      const late = isLateClockIn(correctedIn?.getTime(), scheduledStartAt);
       const updated = {
         clockInAt: correctedIn ?? null,
         clockOutAt: correctedOut ?? null,
         reviewStatus,
-        late: current.late === true,
+        late,
       };
       const batch = writeBatch(db);
       batch.set(doc(db, C.attendance, id, "corrections", correctionId), {
@@ -1012,9 +1153,14 @@ const publishAnnouncement = useCallback(
         clockInAt: correctedIn ?? deleteField(),
         clockOutAt: correctedOut ?? deleteField(),
         reviewStatus,
+        late,
         lastCorrectionId: correctionId,
       });
-      await batch.commit();
+      try {
+        await batch.commit();
+      } catch (error) {
+        throw writeError(error, "The attendance correction could not be saved.");
+      }
       setSnack({ message: "Attendance correction saved", tone: "success" });
     },
     [myId, workplaceTimezone]
@@ -1030,11 +1176,13 @@ const addSwap = useCallback(
     }
     const shiftSnapshot = await getDoc(doc(db, C.shifts, request.shiftId));
     const offeredShift = shiftSnapshot.data();
+    const offeredStart = offeredShift?.startAt?.toMillis?.();
     if (
       !offeredShift ||
       offeredShift.employeeId !== myId ||
       offeredShift.status !== "published" ||
-      offeredShift.startAt.toMillis() <= Date.now()
+      typeof offeredStart !== "number" ||
+      offeredStart <= Date.now()
     ) {
       throw new Error("That shift is no longer available to swap.");
     }
@@ -1064,7 +1212,11 @@ const addSwap = useCallback(
         createdAt: serverTimestamp(),
         expiresAt: expiresAtDays(151),
       });
-      await batch.commit();
+      try {
+        await batch.commit();
+      } catch (error) {
+        throw writeError(error, "The swap request could not be submitted.");
+      }
       setSnack({ message: "Swap request submitted", tone: "success" });
     },
     [employees, myId, swaps]
@@ -1250,53 +1402,70 @@ const addSwap = useCallback(
   // registration; the applicant's next identity check then finds the authorization and links them.
   const approveRegistration = useCallback(
     async (uid: string, newRole: Role, title: string) => {
-      if (!myId) return;
+      if (!myId) throw new Error("Sign in is required to approve registrations.");
       const reg = registrations.find((r) => r.id === uid);
-      if (!reg) return;
+      if (!reg) throw new Error("This registration is no longer available.");
       const email = reg.email.trim().toLowerCase();
+      if (!email) throw new Error("This registration has no email address and can't be approved.");
       const parts = reg.name.trim().split(/\s+/);
       const firstName = parts[0] || email.split("@")[0];
       const lastName = parts.slice(1).join(" ");
-      await runTransaction(db, async (tx) => {
-        const counterRef = doc(db, C.meta, "counters");
-        const counterSnap = await tx.get(counterRef);
-        const seq = (counterSnap.data()?.employeeSeq as number) ?? 1;
-        const id = `EMP-${pad4(seq + 1)}`;
-        tx.set(doc(db, C.employees, id), {
-          firstName,
-          lastName,
-          email,
-          phone: "",
-          title,
-          role: newRole,
-          status: "active",
-          createdBy: myId,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
+      try {
+        await runTransaction(db, async (tx) => {
+          const counterRef = doc(db, C.meta, "counters");
+          const counterSnap = await tx.get(counterRef);
+          if (!counterSnap.exists()) {
+            throw new Error("Employee numbering is not set up yet. Add systemMeta/counters with employeeSeq first.");
+          }
+          const seq = (counterSnap.data()?.employeeSeq as number) ?? 0;
+          const id = `EMP-${pad4(seq + 1)}`;
+          tx.set(doc(db, C.employees, id), {
+            firstName,
+            lastName,
+            email,
+            phone: "",
+            title,
+            role: newRole,
+            status: "active",
+            createdBy: myId,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+          tx.set(doc(db, C.directory, id), { displayName: reg.name.trim() || email, title, status: "active", role: newRole });
+          tx.set(doc(db, C.authorizations, email), { employeeId: id, claimedByUid: null, createdBy: myId, createdAt: serverTimestamp() });
+          tx.update(counterRef, { employeeSeq: seq + 1 });
+          tx.delete(doc(db, C.registrations, uid));
         });
-        tx.set(doc(db, C.directory, id), { displayName: reg.name.trim() || email, title, status: "active", role: newRole });
-        tx.set(doc(db, C.authorizations, email), { employeeId: id, claimedByUid: null, createdBy: myId, createdAt: serverTimestamp() });
-        tx.update(counterRef, { employeeSeq: seq + 1 });
-        tx.delete(doc(db, C.registrations, uid));
-      });
+      } catch (error) {
+        throw writeError(error, "The registration could not be approved.");
+      }
       setSnack({ message: `${reg.name || reg.email} approved`, tone: "success" });
     },
     [myId, registrations]
   );
 
   const rejectRegistration = useCallback(async (uid: string) => {
-    await deleteDoc(doc(db, C.registrations, uid));
+    try {
+      await deleteDoc(doc(db, C.registrations, uid));
+    } catch (error) {
+      throw writeError(error, "The registration could not be rejected.");
+    }
     setSnack({ message: "Registration rejected", tone: "info" });
   }, []);
 
   // Promote an employee to admin (or demote). Rules forbid changing your own role.
   const setEmployeeRole = useCallback(
     async (id: string, newRole: Role) => {
-      if (!myId || id === myId) return;
+      if (!myId) throw new Error("Sign in is required to change roles.");
+      if (id === myId) throw new Error("You can't change your own role.");
       const batch = writeBatch(db);
       batch.update(doc(db, C.employees, id), { role: newRole, updatedAt: serverTimestamp() });
       batch.update(doc(db, C.directory, id), { role: newRole });
-      await batch.commit();
+      try {
+        await batch.commit();
+      } catch (error) {
+        throw writeError(error, "The role could not be changed.");
+      }
       setSnack({ message: newRole === "admin" ? "Promoted to admin" : "Changed to employee", tone: "success" });
     },
     [myId]
@@ -1307,21 +1476,37 @@ const addSwap = useCallback(
 
   const clockIn = useCallback(
     async (shiftId: string, qrProof: string) => {
-      if (!myId) return;
-      if (attendance.some((a) => a.id === `${myId}_${shiftId}`)) throw new Error("duplicate");
+      if (!myId) throw new Error("Sign in is required to clock in.");
+      const recordId = `${myId}_${shiftId}`;
+      if (attendance.some((a) => a.id === recordId)) throw new Error("duplicate");
       const shift = shifts.find((s) => s.id === shiftId);
-      await setDoc(doc(db, C.attendance, `${myId}_${shiftId}`), {
-        employeeId: myId,
-        shiftId,
-        shiftDate: shift?.date ?? workplaceIsoDate(new Date(), workplaceTimezone),
-        clockInAt: serverTimestamp(),
-        clockInReportedAt: Timestamp.now(),
-        clockInSource: "online",
-        clockInActionId: actionId(),
-        qrProof,
-        reviewStatus: "confirmed",
-        late: false,
-      });
+      if (!shift) throw new Error("That shift is no longer available. Refresh your schedule and try again.");
+      if (shift.status !== "Published" && shift.status !== "Updated") {
+        throw new Error("Only a published shift can be clocked into.");
+      }
+      try {
+        await setDoc(doc(db, C.attendance, recordId), {
+          employeeId: myId,
+          shiftId,
+          shiftDate: shift.date,
+          clockInAt: serverTimestamp(),
+          clockInReportedAt: Timestamp.now(),
+          clockInSource: "online",
+          clockInActionId: actionId(),
+          qrProof,
+          reviewStatus: "confirmed",
+          late: false,
+        });
+      } catch (error) {
+        const code = (error as { code?: string } | null)?.code;
+        // The rules answer a replay with permission-denied (create-once document), not already-exists.
+        const existing = code === "permission-denied" || code === "already-exists"
+          ? await getDoc(doc(db, C.attendance, recordId)).catch(() => null)
+          : null;
+        if (existing?.exists()) throw new Error("duplicate");
+        if (code === "already-exists") throw new Error("duplicate");
+        throw error;
+      }
       setClocked(true);
       setLastClockIn(formatWorkplaceTime(new Date(), workplaceTimezone));
     },
@@ -1330,16 +1515,20 @@ const addSwap = useCallback(
 
   const clockOut = useCallback(
     async (qrProof: string) => {
-      if (!myId) return;
-      const open = attendance.find((a) => a.employeeId === myId && a.clockIn !== "—" && a.clockOut === "—");
+      if (!myId) throw new Error("Sign in is required to clock out.");
+      const open = pickOpenAttendance(attendance, myId);
       if (!open) throw new Error("orphan");
-      await updateDoc(doc(db, C.attendance, open.id), {
-        clockOutAt: serverTimestamp(),
-        clockOutReportedAt: Timestamp.now(),
-        clockOutSource: "online",
-        clockOutActionId: actionId(),
-        clockOutProof: qrProof,
-      });
+      try {
+        await updateDoc(doc(db, C.attendance, open.id), {
+          clockOutAt: serverTimestamp(),
+          clockOutReportedAt: Timestamp.now(),
+          clockOutSource: "online",
+          clockOutActionId: actionId(),
+          clockOutProof: qrProof,
+        });
+      } catch (error) {
+        throw writeError(error, "The clock-out could not be saved.");
+      }
       setClocked(false);
     },
     [myId, attendance]
@@ -1396,15 +1585,21 @@ const addSwap = useCallback(
     const settingsRef = doc(db, C.settings, "main");
     const snapshot = await getDoc(settingsRef);
     const saved = snapshot.data() ?? {};
+    const early = Number(saved.clockInEarlyMinutes);
+    const late = Number(saved.clockInLateMinutes);
+    const clockInEarly = Number.isInteger(early) && early >= 0 && early <= 240 ? early : DEFAULT_CLOCK_IN_EARLY_MINUTES;
+    const clockInLate = Number.isInteger(late) && late >= 0 && late <= 480 ? late : DEFAULT_CLOCK_IN_LATE_MINUTES;
     await setDoc(settingsRef, {
       ...next,
-      clockInEarlyMinutes: Number.isInteger(saved.clockInEarlyMinutes) ? saved.clockInEarlyMinutes : 15,
-      clockInLateMinutes: Number.isInteger(saved.clockInLateMinutes) ? saved.clockInLateMinutes : 120,
+      clockInEarlyMinutes: clockInEarly,
+      clockInLateMinutes: clockInLate,
       updatedBy: myId,
       updatedAt: serverTimestamp(),
     });
     liveWorkplaceTimeZone = next.timezone;
     setWorkplaceTimezone(next.timezone);
+    setClockInEarlyMinutes(clockInEarly);
+    setClockInLateMinutes(clockInLate);
     setBusinessDetails({
       businessName: next.businessName,
       businessAddress: next.businessAddress,
@@ -1412,6 +1607,16 @@ const addSwap = useCallback(
       businessEmail: next.businessEmail,
     });
   }, [myId, role, workplaceTimezone]);
+
+  // Announcements store the publisher's employee id; show the person's name instead.
+  const displayAnnouncements = useMemo(
+    () =>
+      announcements.map((item) => {
+        const person = employees.find((employee) => employee.id === item.publisher);
+        return person ? { ...item, publisher: fullName(person) } : item;
+      }),
+    [announcements, employees]
+  );
 
   const value = useMemo<Store>(
     () => ({
@@ -1421,17 +1626,19 @@ const addSwap = useCallback(
       shifts,
       attendance,
       swaps,
-      announcements,
+      announcements: displayAnnouncements,
       notifications,
       notificationPreferences,
       registrations,
-      clockedIn: clockedIn || (!!myId && attendance.some((a) => a.employeeId === myId && a.clockIn !== "—" && a.clockOut === "—")),
+      clockedIn: clockedIn || (!!myId && !!pickOpenAttendance(attendance, myId)),
       lastClockIn,
       qrLabel,
       qrPayload: qrToken ? encodeQr(qrToken) : null,
       snack,
       listenerError,
       workplaceTimezone,
+      clockInEarlyMinutes,
+      clockInLateMinutes,
       ...businessDetails,
       retry,
       saveWorkplaceSettings,
@@ -1449,6 +1656,7 @@ const addSwap = useCallback(
       publishSchedule,
       publishAnnouncement,
       saveAnnouncementDraft,
+      deleteAnnouncement,
       replaceQr,
       markNotificationsRead,
       correctAttendance,
@@ -1462,7 +1670,7 @@ const addSwap = useCallback(
       rejectRegistration,
       setEmployeeRole,
     }),
-    [role, myId, employees, shifts, attendance, swaps, announcements, notifications, notificationPreferences, registrations, clockedIn, lastClockIn, qrLabel, qrToken, snack, listenerError, workplaceTimezone, businessDetails, retry, saveWorkplaceSettings, getEmployee, setClockedIn, saveNotificationPreferences, upsertEmployee, addShift, addShifts, updateShift, deleteShift, publishSchedule, publishAnnouncement, saveAnnouncementDraft, replaceQr, markNotificationsRead, correctAttendance, updateSwap, respondToSwap, addSwap, cancelSwap, clockIn, clockOut, approveRegistration, rejectRegistration, setEmployeeRole, authSignOut]
+    [role, myId, employees, shifts, attendance, swaps, displayAnnouncements, notifications, notificationPreferences, registrations, clockedIn, lastClockIn, qrLabel, qrToken, snack, listenerError, workplaceTimezone, clockInEarlyMinutes, clockInLateMinutes, businessDetails, retry, saveWorkplaceSettings, getEmployee, setClockedIn, saveNotificationPreferences, upsertEmployee, addShift, addShifts, updateShift, deleteShift, publishSchedule, publishAnnouncement, saveAnnouncementDraft, deleteAnnouncement, replaceQr, markNotificationsRead, correctAttendance, updateSwap, respondToSwap, addSwap, cancelSwap, clockIn, clockOut, approveRegistration, rejectRegistration, setEmployeeRole, authSignOut]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -84,7 +84,7 @@ async function seedFirestore(bearer) {
         role: str("admin"), status: str("active"), createdBy: str("EMP-0001"), createdAt: ts(now), updatedAt: ts(now),
       }),
       w(`employeeAuthorizations/${email}`, { employeeId: str("EMP-0001"), claimedByUid: { nullValue: null } }),
-      w("directory/EMP-0001", { displayName: str(`${first} ${last}`.trim()), title: str("Administrator"), status: str("active") }),
+      w("directory/EMP-0001", { displayName: str(`${first} ${last}`.trim()), title: str("Administrator"), status: str("active"), role: str("admin") }),
       w("workplaceSettings/main", {
         businessName: str("PlatinumX"), timezone: str("UTC"), clockInEarlyMinutes: int(15), clockInLateMinutes: int(120),
         updatedBy: str("EMP-0001"), updatedAt: ts(now),

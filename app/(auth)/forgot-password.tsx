@@ -14,7 +14,9 @@ export default function ForgotPassword() {
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
 
-  useEffect(() => clearError, [clearError]);
+  useEffect(() => {
+    clearError();
+  }, [clearError]);
 
   const send = async () => {
     if (!email.trim() || busy) return;

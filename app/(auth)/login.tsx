@@ -6,8 +6,6 @@ import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
-const DEMO = process.env.EXPO_PUBLIC_DEMO_MODE === "true";
-
 // Clear, specific messages for every non-success state (no silent failures).
 const MESSAGES: Partial<Record<AuthStatus, { title: string; body: string }>> = {
   unconfigured: {
@@ -41,7 +39,9 @@ export default function Login() {
   const [busy, setBusy] = useState(false);
   const [touched, setTouched] = useState(false);
 
-  useEffect(() => clearError, [clearError]);
+  useEffect(() => {
+    clearError();
+  }, [clearError]);
 
   // Handle auth routing on login
   useEffect(() => {
@@ -100,7 +100,7 @@ export default function Login() {
             </Pressable>
           </View>
           <Button
-            label={checking ? "Checking your accountâ€¦" : "Log in"}
+            label={checking ? "Checking your account…" : "Log in"}
             onPress={submit}
             disabled={status === "unconfigured"}
             loading={busy || checking}
@@ -114,15 +114,6 @@ export default function Login() {
           <SwitchLink prompt="New here?" action="Create an account" onPress={() => router.replace("/(auth)/signup")} />
         </>
       )}
-      {DEMO ? (
-        <Pressable
-          onPress={() => router.push("/(auth)/preview-roles")}
-          style={{ borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.lavenderSurface, padding: 14 }}
-        >
-          <Text style={[type.meta, { color: colors.secondary }]}>Demo mode (fake data, no backend)</Text>
-          <Text style={[type.card, { color: colors.text }]}>Preview employee or administrator experience</Text>
-        </Pressable>
-      ) : null}
       <Text style={[type.tiny, { color: colors.muted, textAlign: "center" }]}>{BUSINESS_NAME}</Text>
     </AuthShell>
   );

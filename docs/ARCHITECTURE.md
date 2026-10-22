@@ -32,7 +32,7 @@ employees/{EMP-0001} = { role, status, ... }     <- the ONLY source of role/stat
 | `systemMeta/maintenance` | – | lastExportAt, lastExportRangeEnd, reminder state | admin | admin |
 | `workplaceSettings/main` | – | businessName, businessAddress, businessPhone, businessEmail, timezone, clockInEarlyMinutes, clockInLateMinutes | active employees | admin |
 | `qrCredentials/current` | – | token (≥32 chars), version, rotatedBy, rotatedAt | **admin only** | admin; version must increment |
-| `shifts` | auto | employeeId, date, startAt, endAt (timestamps), breakMinutes, label, notes, status (`draft`/`published`/`cancelled`), createdBy, updatedBy, createdAt, updatedAt, revision, changedAfterPublish | admin; employee: own **published** only | admin |
+| `shifts` | auto | employeeId, date, startAt, endAt (timestamps), breakMinutes, label, location, notes, status (`draft`/`published`/`cancelled`), createdBy, updatedBy, createdAt, updatedAt, revision, changedAfterPublish | admin; employee: own **published** only | admin |
 | `attendance` | `{employeeId}_{shiftId}` | employeeId, shiftId, shiftDate, clockInAt (server), clockInReportedAt (device), clockInSource, clockInActionId, qrProof, clockOut* (same), reviewStatus (`confirmed`/`pending_review`/`rejected`), late, lastCorrectionId | admin; owner | employee: create clock-in once, set clock-out once; admin: only with a paired correction doc; **never deleted** |
 | `attendance/{id}/corrections` | auto | adminId, changedAt (server), original, updated, note | admin | admin create only (append-only) |
 | `shiftSwapRequests` | auto | fromEmployeeId, toEmployeeId, shiftId, validated shift summary, reason, status, createdAt, updatedAt, decidedBy | admin; the two parties | see state machine below |
@@ -52,6 +52,24 @@ Weekly repeats are expanded into individual draft shifts for a selected finite p
 months); they are not ongoing recurrence rules. Admins can review, edit, delete, and publish saved drafts from the
 schedule's all-drafts list, including drafts from earlier weeks.
 
+### Scheduling invariants
+
+* Drafts are created with `revision: 1`; every edit, publish, cancel, or reassignment increments `revision`.
+  Publishing re-reads the selected drafts and refuses the commit when a revision changed after the preview
+  (optimistic concurrency), so an administrator never publishes a stale version.
+* Client-side overlap checks (`src/lib/scheduling.ts`) reject two non-cancelled shifts for one employee whose
+  `[startAt, endAt)` intervals intersect. Rules cannot query, so this remains an application-level guard.
+* Bulk publish writes at most **8 shifts per batch**. Rules charge each update for the acting identity plus the
+  assigned employee and the attendance-existence check; Firestore allows 20 document access calls per batched
+  write. Repeated shift creation applies the same accounting and starts a new batch before the nineteenth
+  distinct employee.
+* A published shift can be cancelled even after the assigned employee was deactivated, so deactivation never
+  leaves an unremovable shift on the calendar. Drafts can always be deleted while they have no attendance.
+* `location` is stored with the shift (a snapshot of the workplace name at creation); `notes` is separate.
+* Announcement drafts are ordinary `announcements` documents with `status: 'draft'`. Any administrator may edit,
+  publish, or delete a saved draft; the original `publishedBy`/`createdAt` are immutable, and notifications are
+  sent only when a draft is first published (not on later corrections).
+
 ## Employee ID sequence (concurrency-safe)
 
 `systemMeta/counters.employeeSeq` is read and incremented in a Firestore **transaction/batch** together with the
@@ -66,13 +84,16 @@ stale read, so IDs are unique, gap-free and never reused (deactivation keeps the
 2. Employee scans → app writes `attendance/{employeeId}_{shiftId}` including `qrProof = token`. Rules compare
    `qrProof` with the live credential, so a replaced QR fails **immediately**.
 3. Rules also verify: active employee, shift is theirs and published, `clockInAt == request.time` (server time, cannot be
-   forged), no unknown fields, `late == false` (lateness is manual), and for `online` source the server time is inside
-   `[start − early, start + late]` minutes from `workplaceSettings/main`.
-4. Duplicates: the document id is deterministic and clock-in is a create-once; clock-out can only set empty fields once.
-   The client treats "already exists with my actionId" as idempotent success.
-5. Offline items (`source = offline`) are stored with `reviewStatus = pending_review`; rules do not let an employee
+   forged), no unknown fields, `late == false`, and for `online` source the server time is inside
+   `[start − early, start + late]` minutes from `workplaceSettings/main`. When those settings were never saved the rules
+   fall back to the documented defaults (15 minutes early, 120 minutes late), so a new workplace is not locked out.
+4. Lateness is derived: the stored `late` flag is only written by administrator corrections, and the UI also compares
+   the clock-in with the scheduled start (one minute of grace). The employee can never mark themselves late.
+5. Duplicates: the document id is deterministic and clock-in is a create-once; clock-out can only set empty fields once.
+   The client treats an existing record as "already clocked in".
+6. Offline items (`source = offline`) are stored with `reviewStatus = pending_review`; rules do not let an employee
    self-confirm. Both `clockInReportedAt` (device time, untrusted) and `clockInAt` (server receipt) are kept.
-6. Admin corrections must be committed in the same batch as an immutable `corrections/{id}` document naming the
+7. Admin corrections must be committed in the same batch as an immutable `corrections/{id}` document naming the
    admin, with original and updated values. Rules enforce this pairing.
 
 **Limitation (inherent):** a QR can be photographed or forwarded. A valid scan proves the person held the current code,

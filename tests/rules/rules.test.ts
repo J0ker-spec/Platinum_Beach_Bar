@@ -1,7 +1,7 @@
 /// <reference types="node" />
 // Run with: npm run test:rules   (starts the Firestore emulator; needs JDK 21+)
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing";
-import { doc, getDoc, serverTimestamp, setDoc, Timestamp, updateDoc, writeBatch, deleteDoc } from "firebase/firestore";
+import { collection, doc, getDoc, serverTimestamp, setDoc, Timestamp, updateDoc, writeBatch, deleteDoc } from "firebase/firestore";
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -202,14 +202,17 @@ describe("7 shifts", () => {
     }
     await assertFails(tooLarge.commit());
 
+    // 10 updates need 2 (cached identity) + 10 employees + 10 attendance documents = 22 access
+    // calls, which exceeds Firestore's limit of 20 per batched write.
     const accessLimitBatch = writeBatch(db);
-    for (const { id } of shifts.slice(0, 9)) {
+    for (const { id } of shifts.slice(0, 10)) {
       accessLimitBatch.update(doc(db, "shifts", id), {
         status: "published", updatedBy: "EMP-0001", updatedAt: serverTimestamp(), revision: 2,
       });
     }
     await assertFails(accessLimitBatch.commit());
 
+    // The app publishes in groups of 8 (18 access calls), which stays inside the limit.
     for (let i = 0; i < shifts.length; i += 8) {
       const safeBatch = writeBatch(db);
       for (const { id } of shifts.slice(i, i + 8)) {
@@ -507,6 +510,189 @@ describe("18 workplace business details", () => {
       updatedBy: "EMP-0002",
       updatedAt: serverTimestamp(),
     }));
+  });
+});
+
+describe("21 scheduling and draft management", () => {
+  it("stores an optional workplace location on a shift and bounds its length", async () => {
+    const db = admin().firestore();
+    const base = {
+      employeeId: "EMP-0002", date: "2031-01-01", startAt: hours(48), endAt: hours(56),
+      breakMinutes: 30, label: "Opening", notes: "", location: "Platinum Beach", status: "draft",
+      createdBy: "EMP-0001", updatedBy: "EMP-0001", createdAt: Timestamp.now(), updatedAt: Timestamp.now(), revision: 1,
+    };
+    await assertSucceeds(setDoc(doc(db, "shifts", "with-location"), { ...base, updatedAt: serverTimestamp(), createdAt: serverTimestamp() }));
+    const saved = await getDoc(doc(db, "shifts", "with-location"));
+    expect(saved.data()?.location).toBe("Platinum Beach");
+    await assertFails(updateDoc(doc(db, "shifts", "with-location"), {
+      location: "x".repeat(121), updatedBy: "EMP-0001", updatedAt: serverTimestamp(), revision: 2,
+    }));
+  });
+
+  it("lets an administrator cancel a published shift whose employee was deactivated", async () => {
+    await env.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), "shifts", "sam-pub"), {
+        employeeId: "EMP-0004", date: "2030-01-01", startAt: hours(24), endAt: hours(32),
+        breakMinutes: 0, label: "s", status: "published", createdBy: "EMP-0001",
+        updatedBy: "EMP-0001", createdAt: Timestamp.now(), updatedAt: Timestamp.now(), revision: 1,
+      });
+    });
+    const db = admin().firestore();
+    // Rewriting an inactive employee's shift is still refused…
+    await assertFails(updateDoc(doc(db, "shifts", "sam-pub"), {
+      label: "changed", updatedBy: "EMP-0001", updatedAt: serverTimestamp(), revision: 2,
+    }));
+    // …but cancelling it is allowed, so the shift does not get stuck on the calendar.
+    await assertSucceeds(updateDoc(doc(db, "shifts", "sam-pub"), {
+      status: "cancelled", updatedBy: "EMP-0001", updatedAt: serverTimestamp(), revision: 2, changedAfterPublish: true,
+    }));
+    const saved = await getDoc(doc(db, "shifts", "sam-pub"));
+    expect(saved.data()?.status).toBe("cancelled");
+  });
+
+  it("allows a draft shift to be edited and deleted after it is created", async () => {
+    const db = admin().firestore();
+    await env.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), "shifts", "editable-draft"), {
+        employeeId: "EMP-0002", date: "2030-01-01", startAt: hours(72), endAt: hours(80),
+        breakMinutes: 30, label: "Draft", status: "draft", createdBy: "EMP-0001",
+        updatedBy: "EMP-0001", createdAt: Timestamp.now(), updatedAt: Timestamp.now(), revision: 1,
+      });
+    });
+    await assertSucceeds(updateDoc(doc(db, "shifts", "editable-draft"), {
+      label: "Edited draft", startAt: hours(73), endAt: hours(81), updatedBy: "EMP-0001",
+      updatedAt: serverTimestamp(), revision: 2,
+    }));
+    await assertSucceeds(deleteDoc(doc(db, "shifts", "editable-draft")));
+  });
+});
+
+describe("22 announcement drafts", () => {
+  const seedDraft = async (publishedBy = "EMP-0001") => {
+    await env.withSecurityRulesDisabled(async (context) => {
+      const d = context.firestore();
+      await setDoc(doc(d, "employees", "EMP-0005"), {
+        firstName: "Second", lastName: "Admin", email: "adm2@test.example", phone: "", title: "x",
+        role: "admin", status: "active", createdBy: "EMP-0001", createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+      });
+      await setDoc(doc(d, "userLinks", "u-adm2"), { employeeId: "EMP-0005", linkedAt: Timestamp.now() });
+      await setDoc(doc(d, "announcements", "saved-draft"), {
+        title: "Parking notice", body: "Use the rear lot.", priority: "normal", status: "draft",
+        audience: "all", audienceIds: [], publishedBy, createdAt: Timestamp.now(), publishedAt: Timestamp.now(),
+      });
+    });
+  };
+  it("another administrator can edit and publish a saved draft without becoming its author", async () => {
+    await seedDraft("EMP-0001");
+    const db = authCtx("u-adm2", "adm2@test.example").firestore();
+    await assertSucceeds(updateDoc(doc(db, "announcements", "saved-draft"), {
+      title: "Parking notice (updated)", body: "Use the rear lot from Monday.", status: "published", publishedAt: serverTimestamp(),
+    }));
+    const saved = await getDoc(doc(db, "announcements", "saved-draft"));
+    expect(saved.data()?.title).toBe("Parking notice (updated)");
+    expect(saved.data()?.status).toBe("published");
+    expect(saved.data()?.publishedBy).toBe("EMP-0001");
+  });
+  it("rejects an empty or oversized announcement", async () => {
+    await seedDraft("EMP-0001");
+    const db = admin().firestore();
+    await assertFails(updateDoc(doc(db, "announcements", "saved-draft"), { title: "", body: "Valid body" }));
+    await assertFails(updateDoc(doc(db, "announcements", "saved-draft"), { title: "x".repeat(201) }));
+    await assertFails(updateDoc(doc(db, "announcements", "saved-draft"), { body: "x".repeat(5001) }));
+  });
+  it("lets an administrator delete a draft", async () => {
+    await seedDraft("EMP-0001");
+    await assertSucceeds(deleteDoc(doc(admin().firestore(), "announcements", "saved-draft")));
+  });
+  it("employees cannot edit or delete announcements", async () => {
+    await seedDraft("EMP-0001");
+    const db = maya().firestore();
+    await assertFails(updateDoc(doc(db, "announcements", "saved-draft"), { title: "Hijacked" }));
+    await assertFails(deleteDoc(doc(db, "announcements", "saved-draft")));
+  });
+});
+
+describe("23 clock-in window defaults", () => {
+  it("uses the documented defaults when workplace settings were never saved", async () => {
+    await env.withSecurityRulesDisabled(async (context) => {
+      await deleteDoc(doc(context.firestore(), "workplaceSettings", "main"));
+    });
+    const db = maya().firestore();
+    // "now-pub" started a few minutes ago, inside the default 15-minute early window.
+    await assertSucceeds(setDoc(doc(db, "attendance", "EMP-0002_now-pub"), clockIn()));
+    // A shift two days out is still rejected.
+    await assertFails(setDoc(doc(db, "attendance", "EMP-0002_future-pub"), clockIn({ shiftId: "future-pub" })));
+  });
+});
+
+describe("24 end-to-end schedule persistence", () => {
+  it("creates, edits, publishes, updates, and cancels a shift with the data visible to the right people", async () => {
+    const adminDb = admin().firestore();
+    const draftPayload = (label: string) => ({
+      employeeId: "EMP-0002",
+      date: "2030-02-04",
+      startAt: hours(72),
+      endAt: hours(80),
+      breakMinutes: 30,
+      label,
+      location: "Platinum Beach",
+      notes: "Training",
+      status: "draft",
+      createdBy: "EMP-0001",
+      updatedBy: "EMP-0001",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      revision: 1,
+      changedAfterPublish: false,
+    });
+
+    // 1. Create two drafts (the app writes one batch, auto ids).
+    const shiftRef = doc(collection(adminDb, "shifts"));
+    const createBatch = writeBatch(adminDb);
+    createBatch.set(shiftRef, draftPayload("Opening"));
+    const deletedRef = doc(collection(adminDb, "shifts"));
+    createBatch.set(deletedRef, draftPayload("Closing"));
+    await assertSucceeds(createBatch.commit());
+
+    // 2. Both persist exactly as written and stay invisible to the employee while drafts.
+    const created = await getDoc(shiftRef);
+    expect(created.data()?.status).toBe("draft");
+    expect(created.data()?.location).toBe("Platinum Beach");
+    expect(created.data()?.notes).toBe("Training");
+    const mayaDb = maya().firestore();
+    await assertFails(getDoc(doc(mayaDb, "shifts", shiftRef.id)));
+
+    // 3. Editing a draft persists the new values.
+    await assertSucceeds(updateDoc(shiftRef, {
+      label: "Opening (revised)", breakMinutes: 45,
+      updatedBy: "EMP-0001", updatedAt: serverTimestamp(), revision: 2,
+    }));
+    expect((await getDoc(shiftRef)).data()?.label).toBe("Opening (revised)");
+
+    // 4. Deleting a draft removes it.
+    await assertSucceeds(deleteDoc(deletedRef));
+    expect((await getDoc(doc(adminDb, "shifts", deletedRef.id))).exists()).toBe(false);
+
+    // 5. Publishing makes it readable by the assigned employee.
+    await assertSucceeds(updateDoc(shiftRef, {
+      status: "published", updatedBy: "EMP-0001", updatedAt: serverTimestamp(), revision: 3,
+    }));
+    const published = await getDoc(doc(mayaDb, "shifts", shiftRef.id));
+    expect(published.data()?.label).toBe("Opening (revised)");
+    expect(published.data()?.status).toBe("published");
+
+    // 6. A later correction keeps the change flag and stays readable.
+    await assertSucceeds(updateDoc(shiftRef, {
+      label: "Opening (final)", updatedBy: "EMP-0001", updatedAt: serverTimestamp(), revision: 4, changedAfterPublish: true,
+    }));
+    expect((await getDoc(doc(mayaDb, "shifts", shiftRef.id))).data()?.label).toBe("Opening (final)");
+
+    // 7. Cancelling is persisted and removes the shift from the employee's schedule.
+    await assertSucceeds(updateDoc(shiftRef, {
+      status: "cancelled", updatedBy: "EMP-0001", updatedAt: serverTimestamp(), revision: 5, changedAfterPublish: true,
+    }));
+    expect((await getDoc(doc(adminDb, "shifts", shiftRef.id))).data()?.status).toBe("cancelled");
+    await assertFails(getDoc(doc(mayaDb, "shifts", shiftRef.id)));
   });
 });
 

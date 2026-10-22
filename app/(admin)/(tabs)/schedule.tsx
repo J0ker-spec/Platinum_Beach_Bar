@@ -1,4 +1,4 @@
-import { addDays, formatRange, weekDates } from "@/src/dates";
+import { addDays, formatPretty, formatRange, weekDates } from "@/src/dates";
 import { workplaceToday } from "@/src/lib/time";
 import { useStore } from "@/src/store";
 import { colors, type } from "@/src/theme";
@@ -24,11 +24,13 @@ export default function AdminSchedule() {
   const [openShift, setOpenShift] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deletingShift, setDeletingShift] = useState(false);
-  const dayShifts = shifts.filter((s) => s.date === selected);
+  const dayShifts = shifts
+    .filter((s) => s.date === selected)
+    .sort((a, b) => (a.startAt ?? 0) - (b.startAt ?? 0));
   const draftShifts = draftShiftsBetween(shifts, dates[0], dates[6]);
   const allDrafts = shifts
     .filter((shift) => shift.status === "Draft")
-    .sort((a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start));
+    .sort((a, b) => (a.startAt ?? 0) - (b.startAt ?? 0));
   const scheduleStatus = draftShifts.length
     ? "Draft"
     : shifts.some((shift) => dates.includes(shift.date) && (shift.status === "Published" || shift.status === "Updated"))
@@ -67,7 +69,7 @@ export default function AdminSchedule() {
           <ChevronLeft color={colors.text} />
         </Pressable>
         <View style={{ flex: 1 }}>
-          <WeekStrip dates={dates} selected={selected} marked={shifts.map((s) => s.date)} onSelect={setSelected} />
+          <WeekStrip dates={dates} selected={selected} marked={shifts.map((s) => s.date)} onSelect={setSelected} today={today} />
         </View>
         <Pressable onPress={() => moveWeek(7)} accessibilityLabel="Next week">
           <ChevronRight color={colors.text} />
@@ -120,7 +122,7 @@ export default function AdminSchedule() {
           {draftShifts.map((shift) => (
             <Card key={shift.id} style={{ padding: 12 }}>
               <Text style={[type.card, { color: colors.text }]}>
-                {formatRange(shift.date, shift.date)} · {shift.start}–{shift.end}
+                {formatPretty(shift.date)} · {shift.start}–{shift.end}
               </Text>
               <Text style={[type.meta, { color: colors.textSecondary }]}>
                 {findEmployee(shift.employeeId) ? fullName(findEmployee(shift.employeeId)!) : shift.employeeId} · {shift.label}
@@ -164,13 +166,14 @@ export default function AdminSchedule() {
               <Card
                 key={shift.id}
                 onPress={() => {
-                  setOpenShift(shift.id);
+                  // Close the list first: mounting two modals in the same frame can drop the second.
                   setDraftInboxOpen(false);
+                  setTimeout(() => setOpenShift(shift.id), 200);
                 }}
                 style={{ padding: 12 }}
               >
                 <Text style={[type.card, { color: colors.text }]}>
-                  {formatRange(shift.date, shift.date)} · {shift.start}–{shift.end}
+                  {formatPretty(shift.date)} · {shift.start}–{shift.end}
                 </Text>
                 <Text style={[type.meta, { color: colors.textSecondary }]}>
                   {employee ? fullName(employee) : shift.employeeId} · {shift.label}
@@ -186,7 +189,7 @@ export default function AdminSchedule() {
       <Sheet visible={!!viewShift} onClose={() => setOpenShift(null)}>
         {viewShift ? (
           <>
-            <Text style={[type.section, { color: colors.text }]}>{formatRange(viewShift.date, viewShift.date)}</Text>
+            <Text style={[type.section, { color: colors.text }]}>{formatPretty(viewShift.date)}</Text>
             <Text style={[type.title, { color: colors.text }]}>{viewShift.start} – {viewShift.end}</Text>
             <Text style={[type.body, { color: colors.textSecondary }]}>{viewShift.label} · {findEmployee(viewShift.employeeId) ? fullName(findEmployee(viewShift.employeeId)) : viewShift.employeeId}</Text>
             <StatusBadge label={viewShift.status} tone={badgeTone(viewShift.status)} />

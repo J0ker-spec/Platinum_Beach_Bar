@@ -1,5 +1,5 @@
 import { fullName } from "@/src/data";
-import { formatPretty } from "@/src/dates";
+import { formatPretty, isoDate } from "@/src/dates";
 import { useStore } from "@/src/store";
 import { colors, type } from "@/src/theme";
 import { Avatar, BackHeader, Button, Card, Dialog, Screen, Sheet, StatusBadge } from "@/src/ui";
@@ -18,9 +18,27 @@ export default function EmployeeDetail() {
   const [deactivate, setDeactivate] = useState(false);
   const [remove, setRemove] = useState(0);
 
-  if (!person) return null;
-  const upcoming = shifts.filter((s) => s.employeeId === person.id).slice(0, 3);
-  const records = attendance.filter((a) => a.employeeId === person.id).slice(0, 3);
+  if (!person) {
+    return (
+      <Screen>
+        <BackHeader title="Employee" onBack={() => router.back()} />
+        <Text style={[type.body, { color: colors.textSecondary }]}>Loading employee…</Text>
+      </Screen>
+    );
+  }
+  const upcoming = shifts
+    .filter(
+      (s) =>
+        s.employeeId === person.id &&
+        s.status !== "Cancelled" &&
+        (typeof s.endAt === "number" ? s.endAt > Date.now() : s.date >= isoDate())
+    )
+    .sort((a, b) => (a.startAt ?? 0) - (b.startAt ?? 0))
+    .slice(0, 3);
+  const records = attendance
+    .filter((a) => a.employeeId === person.id)
+    .sort((a, b) => (b.clockInAt ?? 0) - (a.clockInAt ?? 0) || b.date.localeCompare(a.date))
+    .slice(0, 3);
 
   return (
     <Screen scroll>

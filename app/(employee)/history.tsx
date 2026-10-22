@@ -15,7 +15,7 @@ export default function History() {
   const [filter, setFilter] = useState("All");
   const [open, setOpen] = useState<string | null>(null);
   const rows = attendance
-    .filter((a) => a.employeeId === (userId ?? "EMP-0001") && (filter === "All" || a.status === filter))
+    .filter((a) => a.employeeId === (userId ?? "") && (filter === "All" || a.status === filter))
     .sort((a, b) => (b.clockInAt ?? 0) - (a.clockInAt ?? 0));
   const current = rows.find((r) => r.id === open);
 
