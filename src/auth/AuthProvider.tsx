@@ -57,7 +57,7 @@ type AuthCtx = {
   signInWithEmail: (email: string, password: string) => Promise<boolean>;
   sendPasswordReset: (email: string) => Promise<boolean>;
   resendVerification: () => Promise<boolean>;
-  refreshVerification: () => Promise<void>;
+  refreshVerification: () => Promise<boolean>;
   clearError: () => void;
   signOut: () => Promise<void>;
   canSignIn: boolean;
@@ -112,6 +112,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [promptGoogle, setPromptGoogle] = useState<(() => Promise<void>) | null>(null);
   const unsubProfile = useRef<(() => void) | null>(null);
+  // Every identity check gets a number. A slower, older check must never overwrite the result of
+  // a newer one (e.g. sign-out while the authorization lookup is still running).
+  const identityRun = useRef(0);
 
   const handleGoogleSuccess = useCallback((idToken: string) => {
     setStatus("checking");
@@ -136,6 +139,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       unsubProfile.current?.();
       unsubProfile.current = null;
       if (!user) {
+        identityRun.current += 1; // invalidate any identity check still in flight
         setProfile(null);
         setGoogleEmail(null);
         setStatus("signedOut");
@@ -152,6 +156,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   async function resolveIdentity(user: User) {
+    const run = identityRun.current + 1;
+    identityRun.current = run;
+    // A re-check (e.g. "Check again" on the pending screen) must not leave the previous
+    // employee listener attached, otherwise profile updates are applied twice.
+    unsubProfile.current?.();
+    unsubProfile.current = null;
+    const isStale = () => run !== identityRun.current;
     setStatus("checking");
     setError(null);
     try {
@@ -162,18 +173,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!user.emailVerified) {
         await reload(user).catch(() => undefined);
       }
+      if (isStale()) return;
       if (!user.emailVerified) {
         setStatus("unverified");
         return;
       }
       await user.getIdToken(true).catch(() => undefined);
+      if (isStale()) return;
       const emailKey = user.email.toLowerCase();
       let link = await getDoc(doc(db, C.userLinks, user.uid));
+      if (isStale()) return;
 
       if (!link.exists()) {
         // First sign-in: the account must be pre-authorized by an administrator.
         const authRef = doc(db, C.authorizations, emailKey);
         const authSnap = await getDoc(authRef);
+        if (isStale()) return;
         if (authSnap.exists() && authSnap.data()?.claimedByUid && authSnap.data()?.claimedByUid !== user.uid) {
           setStatus("alreadyLinked");
           return;
@@ -184,6 +199,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           batch.update(authRef, { claimedByUid: user.uid, claimedAt: serverTimestamp() });
           await batch.commit(); // rules re-verify everything server-side
           link = await getDoc(doc(db, C.userLinks, user.uid));
+          if (isStale()) return;
         } else {
           // Email verified but no authorization yet: register for administrator approval.
           // Doc id = auth uid, so a user can only have one pending registration (create-once).
@@ -199,17 +215,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           ).catch((e) => {
             console.warn("Could not write registration document:", e);
           });
+          if (isStale()) return;
           setStatus("pendingApproval");
           return;
         }
       }
 
       const employeeId = link.data()?.employeeId as string;
+      if (!employeeId) {
+        setStatus("unauthorized");
+        return;
+      }
       // Live listener: deactivation or role change reaches the UI immediately.
       unsubProfile.current = onSnapshot(
         doc(db, C.employees, employeeId),
         (snap) => {
+          if (isStale()) return;
           if (!snap.exists()) {
+            setProfile(null);
             setStatus("unauthorized");
             return;
           }
@@ -228,11 +251,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setStatus(p.status === "active" ? "ready" : "deactivated");
         },
         (e) => {
+          if (isStale()) return;
           setError(e.message);
           setStatus("error");
         }
       );
     } catch (e: any) {
+      if (isStale()) return;
       setError(
         e?.code === "permission-denied" ? "Access was denied by the workplace service." : e?.message ?? "Could not verify your account."
       );
@@ -309,19 +334,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  /** After the user taps the link in the email: reload the user, refresh the token (rules read email_verified from it), re-check access. */
+  /**
+   * After the user taps the link in the email: reload the user, refresh the token (rules read
+   * email_verified from it), re-check access. Returns whether the address is verified now.
+   */
   const refreshVerification = useCallback(async () => {
     const user = auth.currentUser;
-    if (!user) return;
+    if (!user) return false;
     setError(null);
     try {
       await reload(user);
-      if (user.emailVerified) {
-        await user.getIdToken(true);
-        await resolveIdentity(user);
-      }
+      if (!user.emailVerified) return false;
+      await user.getIdToken(true);
+      await resolveIdentity(user);
+      return true;
     } catch (e: any) {
       setError(authErrorMessage(e));
+      return false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -329,6 +358,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const clearError = useCallback(() => setError(null), []);
 
   const signOut = useCallback(async () => {
+    identityRun.current += 1;
     unsubProfile.current?.();
     unsubProfile.current = null;
     for (const fn of signOutHooks) {

@@ -26,7 +26,7 @@ Until configured the login screen shows "Backend not configured" — it never fa
 ## 3. First administrator → see [FIRST_ADMIN.md](FIRST_ADMIN.md)
 
 ## 4. Run
-`npm start` (demo data only when `EXPO_PUBLIC_DEMO_MODE=true`).
+`npm start`. The app has no demo/fake-data mode: every screen reads the signed-in workplace from Firestore.
 
 ## 5. Tests
 Rules tests need the Firestore emulator and **JDK 21+** (`java -version`).

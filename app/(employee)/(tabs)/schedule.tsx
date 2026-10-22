@@ -56,7 +56,7 @@ export default function EmployeeSchedule() {
           <ChevronLeft color={colors.text} />
         </Pressable>
         <View style={{ flex: 1 }}>
-          <WeekStrip dates={dates} selected={selected} marked={marked} onSelect={setSelected} />
+          <WeekStrip dates={dates} selected={selected} marked={marked} onSelect={setSelected} today={today} />
         </View>
         <Pressable accessibilityLabel="Next week" onPress={() => moveWeek(7)}>
           <ChevronRight color={colors.text} />
@@ -142,7 +142,8 @@ export default function EmployeeSchedule() {
               {selectedShift.start} – {selectedShift.end}
             </Text>
             <Text style={[type.body, { color: colors.textSecondary }]}>
-              {selectedShift.label} · {selectedShift.location}
+              {selectedShift.label}
+              {selectedShift.location ? ` · ${selectedShift.location}` : ""}
             </Text>
             <Text style={[type.meta, { color: colors.muted }]}>Break · {selectedShift.breakMinutes} minutes</Text>
             {selectedShift.notes ? <Text style={[type.body, { color: colors.text }]}>{selectedShift.notes}</Text> : null}

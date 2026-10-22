@@ -1,4 +1,3 @@
-import { useAuth } from "@/src/auth/AuthProvider";
 import { fullName } from "@/src/data";
 import { useStore } from "@/src/store";
 import { APP_NAME, colors, type } from "@/src/theme";
@@ -11,10 +10,10 @@ import { Text, View } from "react-native";
 export default function More() {
   const router = useRouter();
   const { userId, signOut, getEmployee: findEmployee, registrations, swaps, businessName } = useStore();
-  const { signOut: authSignOut } = useAuth();
-  const me = findEmployee(userId ?? "ADM-0001")!;
+  const me = findEmployee(userId ?? "");
   const [out, setOut] = useState(false);
   const pendingSwaps = swaps.filter((s) => s.status === "Awaiting approval");
+  if (!me) return <Screen><Text style={[type.meta, { color: colors.muted }]}>Loading…</Text></Screen>;
 
   return (
     <Screen scroll>
@@ -55,14 +54,13 @@ export default function More() {
         icon={LogOut}
         tone="danger"
         title="Sign out?"
-        body="You’ll return to the login preview."
+        body="Your session ends on this device. Workplace data stays saved."
         primary="Sign out"
         secondary="Cancel"
         onSecondary={() => setOut(false)}
         onPrimary={() => {
           setOut(false);
           signOut();
-          void authSignOut(); // also end the real Firebase session
           router.replace("/(auth)/login");
         }}
       />

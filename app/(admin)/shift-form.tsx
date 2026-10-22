@@ -4,6 +4,7 @@ import { useStore } from "@/src/store";
 import { colors, type } from "@/src/theme";
 import { Avatar, BackHeader, Button, Card, Dialog, FilterChip, Screen, TextField } from "@/src/ui";
 import { normalizeTime, repeatDatesForMonths } from "@/src/lib/time";
+import { weekdayOfIsoDate } from "@/src/lib/scheduling";
 import { workplaceToday } from "@/src/lib/time";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
@@ -13,6 +14,10 @@ const times = ["7:00 AM", "8:00 AM", "9:00 AM", "10:00 AM", "11:00 AM", "1:00 PM
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const REPEAT = ["Does not repeat", "1 month", "2 months", "3 months", "6 months", "12 months"];
 const breaks = [0, 15, 20, 30, 45, 60];
+/** How far ahead a single (non-repeating) shift can be dated. */
+const SCHEDULE_HORIZON_DAYS = 60;
+/** How long to wait for the shift document before reporting that it is gone. */
+const MISSING_SHIFT_TIMEOUT_MS = 5000;
 
 function dateLabel(value: string, today: string): string {
   const [year, month, day] = value.split("-").map(Number);
@@ -61,7 +66,11 @@ export default function ShiftForm() {
   const { employees, shifts, addShifts, updateShift, setSnack, workplaceTimezone, businessName } = useStore();
   const today = workplaceToday(workplaceTimezone);
   const existing = shiftId ? shifts.find((item) => item.id === shiftId) : undefined;
-  const staff = employees.filter((e) => !e.isAdmin && (e.status === "Active" || e.id === existing?.employeeId));
+  // Admins are not offered for new shifts, but an existing shift must stay editable even when its
+  // employee was promoted (or deactivated), otherwise it could never be reassigned or removed.
+  const staff = employees.filter(
+    (e) => (e.status === "Active" || e.id === existing?.employeeId) && (!e.isAdmin || e.id === existing?.employeeId)
+  );
   const [employeeId, setEmployeeId] = useState(staff[0]?.id ?? "");
   const [date, setDate] = useState(today);
   const [start, setStart] = useState("9:00 AM");
@@ -71,11 +80,12 @@ export default function ShiftForm() {
   const [note, setNote] = useState("");
   const [leave, setLeave] = useState(false);
   const [repeat, setRepeat] = useState("Does not repeat");
-  const [days, setDays] = useState<number[]>([new Date().getDay()]);
+  const [days, setDays] = useState<number[]>([weekdayOfIsoDate(today)]);
   const [startText, setStartText] = useState("");
   const [endText, setEndText] = useState("");
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [missing, setMissing] = useState(false);
   const loadedShiftId = useRef<string | null>(null);
 
   useEffect(() => {
@@ -91,12 +101,22 @@ export default function ShiftForm() {
     }
   }, [existing]);
 
+  // A deleted (or unreadable) shift used to leave the screen on "Loading shift…" forever.
+  useEffect(() => {
+    if (!shiftId || existing) {
+      setMissing(false);
+      return;
+    }
+    const id = setTimeout(() => setMissing(true), MISSING_SHIFT_TIMEOUT_MS);
+    return () => clearTimeout(id);
+  }, [shiftId, existing]);
+
   useEffect(() => {
     if (!shiftId && !employeeId && staff[0]) setEmployeeId(staff[0].id);
   }, [employeeId, shiftId, staff]);
 
   const person = staff.find((e) => e.id === employeeId);
-  const dayOptions = [...new Set([date, ...Array.from({ length: 14 }, (_, i) => isoDate(addDays(new Date(`${today}T12:00:00`), i)))])];
+  const dayOptions = [...new Set([date, ...Array.from({ length: SCHEDULE_HORIZON_DAYS }, (_, i) => isoDate(addDays(new Date(`${today}T12:00:00`), i)))])];
   const months = existing || repeat === "Does not repeat" ? 0 : parseInt(repeat, 10);
   const dates = months ? repeatDatesForMonths(date, months, days) : [date];
   const startOk = !startText || !!normalizeTime(startText);
@@ -104,11 +124,29 @@ export default function ShiftForm() {
   const toggleDay = (d: number) => setDays((cur) => (cur.includes(d) ? cur.filter((x) => x !== d) : [...cur, d]));
   const touch = () => setDirty(true);
   const close = () => (dirty ? setLeave(true) : router.back());
+  const chooseDate = (value: string) => {
+    touch();
+    setDate(value);
+    // Repeating shifts follow the weekday of the chosen start date, otherwise the default
+    // (today's weekday) silently placed the shifts on unrelated days.
+    if (repeat !== "Does not repeat") setDays([weekdayOfIsoDate(value)]);
+  };
+  const chooseRepeat = (value: string) => {
+    touch();
+    setRepeat(value);
+    if (value !== "Does not repeat") setDays([weekdayOfIsoDate(date)]);
+  };
 
   if (shiftId && !existing) {
     return (
       <Screen>
-        <Text style={[type.meta, { color: colors.muted }]}>Loading shift…</Text>
+        <BackHeader title={missing ? "Shift not available" : "Edit shift"} onBack={() => router.back()} />
+        <Text style={[type.body, { color: colors.textSecondary }]}>
+          {missing
+            ? "This shift no longer exists. It may have been deleted, published or cancelled on another device."
+            : "Loading shift…"}
+        </Text>
+        {missing ? <Button label="Back to schedule" variant="secondary" onPress={() => router.back()} /> : null}
       </Screen>
     );
   }
@@ -131,25 +169,35 @@ export default function ShiftForm() {
             </Card>
           ))}
         </ScrollView>
+        {!staff.length ? (
+          <Text style={[type.meta, { color: colors.warning }]}>Add an active employee before creating a shift.</Text>
+        ) : null}
 
         <Text style={[type.section, { color: colors.text }]}>Date and time</Text>
-        <Picker label="Date" options={dayOptions} value={date} onChange={(v) => { touch(); setDate(v); }} formatOption={(value) => dateLabel(value, today)} />
-        <Picker label="Start time" options={times} value={start} onChange={(v) => { touch(); setStart(v); }} />
+        <Picker label="Date" options={dayOptions} value={date} onChange={chooseDate} formatOption={(value) => dateLabel(value, today)} />
+        <Picker label="Start time" options={times} value={start} onChange={(v) => { touch(); setStart(v); setStartText(""); }} />
         <TextField label="Or exact start time" value={startText} onChangeText={(v) => { touch(); setStartText(v); const n = normalizeTime(v); if (n) setStart(n); }} placeholder="e.g. 8:45 AM or 14:30" error={startOk ? undefined : "Use a time like 8:45 AM"} />
-        <Picker label="End time" options={times} value={end} onChange={(v) => { touch(); setEnd(v); }} />
+        <Picker label="End time" options={times} value={end} onChange={(v) => { touch(); setEnd(v); setEndText(""); }} />
         <TextField label="Or exact end time" value={endText} onChangeText={(v) => { touch(); setEndText(v); const n = normalizeTime(v); if (n) setEnd(n); }} placeholder="e.g. 5:15 PM or 17:15" error={endOk ? undefined : "Use a time like 5:15 PM"} />
         <Picker label="Break" options={breaks.map((b) => `${b} min`)} value={`${brk} min`} onChange={(v) => { touch(); setBrk(parseInt(v, 10)); }} />
 
         {!existing ? (
           <>
             <Text style={[type.section, { color: colors.text }]}>Repeat</Text>
-            <Picker label="Repeat weekly for" options={REPEAT} value={repeat} onChange={(v) => { touch(); setRepeat(v); }} />
+            <Picker label="Repeat weekly for" options={REPEAT} value={repeat} onChange={chooseRepeat} />
             {months > 0 && (
               <View style={{ gap: 6 }}>
                 <Text style={[type.label, { color: colors.textSecondary }]}>Repeat on these days (starting {formatFull(date)})</Text>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                   {DAYS.map((n, i) => <FilterChip key={n} label={n} active={days.includes(i)} onPress={() => { touch(); toggleDay(i); }} />)}
                 </View>
+                {!days.length ? (
+                  <Text style={[type.meta, { color: colors.error }]}>Choose at least one weekday, or the repeat creates no shifts.</Text>
+                ) : !dates.includes(date) ? (
+                  <Text style={[type.meta, { color: colors.warning }]}>
+                    The selected start date is not one of the repeat days, so no shift will be created on it.
+                  </Text>
+                ) : null}
               </View>
             )}
           </>

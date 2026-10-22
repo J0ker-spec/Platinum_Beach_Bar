@@ -1,4 +1,4 @@
-﻿import { auth } from "@/src/firebase/client";
+import { auth } from "@/src/firebase/client";
 import { useAuth } from "@/src/auth/AuthProvider";
 import { AuthShell, FormError } from "@/src/auth/AuthShell";
 import { colors, type } from "@/src/theme";
@@ -13,12 +13,16 @@ export default function VerifyEmail() {
   const { status, error, googleEmail, resendVerification, refreshVerification, signOut, clearError } = useAuth();
   const [busy, setBusy] = useState<"check" | "resend" | null>(null);
   const [sent, setSent] = useState(false);
+  const [notYet, setNotYet] = useState(false);
 
-  useEffect(() => clearError, [clearError]);
-
-  // Signed out (or never signed in) -> back to sign up.
   useEffect(() => {
-    if (status === "signedOut") router.replace("/(auth)/signup");
+    clearError();
+  }, [clearError]);
+
+  // Signed out (or never signed in) -> back to sign up. `auth.currentUser` is checked as well
+  // because the auth listener can still report "signedOut" for a moment after sign-up.
+  useEffect(() => {
+    if (status === "signedOut" && !auth.currentUser) router.replace("/(auth)/signup");
     // Verified, but not (yet) authorized / deactivated / failed: the login screen explains why.
     if (["unauthorized", "alreadyLinked", "deactivated", "error"].includes(status)) router.replace("/(auth)/login");
     if (status === "pendingApproval") router.replace("/(auth)/pending-approval");
@@ -26,7 +30,9 @@ export default function VerifyEmail() {
 
   const check = async () => {
     setBusy("check");
-    await refreshVerification();
+    setSent(false);
+    const verified = await refreshVerification();
+    setNotYet(!verified);
     setBusy(null);
   };
   const resend = async () => {
@@ -49,6 +55,11 @@ export default function VerifyEmail() {
       </View>
       {error ? <FormError body={error} /> : null}
       {sent ? <Text style={[type.meta, { color: colors.success, textAlign: "center" }]}>Verification email sent again.</Text> : null}
+      {notYet ? (
+        <Text style={[type.meta, { color: colors.warning, textAlign: "center" }]}>
+          That address is not verified yet. Open the link in the email (check spam too), then try again.
+        </Text>
+      ) : null}
       <Button label="I've verified my email" onPress={check} loading={busy === "check"} />
       <Button label="Resend email" variant="secondary" onPress={resend} loading={busy === "resend"} />
       <Button label="Use a different account" variant="ghost" onPress={signOut} />

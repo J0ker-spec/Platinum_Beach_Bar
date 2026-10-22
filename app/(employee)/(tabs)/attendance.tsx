@@ -10,10 +10,13 @@ import { Text, View } from "react-native";
 export default function AttendanceHome() {
   const router = useRouter();
   const { userId, shifts, clockedIn, lastClockIn, attendance, workplaceTimezone, getEmployee: findEmployee } = useStore();
-  const me = findEmployee(userId ?? "EMP-0001")!;
+  const me = findEmployee(userId ?? "");
+  if (!me) return <Screen><Text style={[type.meta, { color: colors.muted }]}>Loading…</Text></Screen>;
   const today = workplaceToday(workplaceTimezone);
   const todayShift = shifts.filter((s) => s.employeeId === me.id && s.date === today).sort((a, b) => (a.startAt ?? 0) - (b.startAt ?? 0))[0];
   const mine = attendance.filter((a) => a.employeeId === me.id).sort((a, b) => (b.clockInAt ?? 0) - (a.clockInAt ?? 0));
+  // After a restart the session-only value is empty, so fall back to today's stored record.
+  const lastIn = lastClockIn ?? mine.find((row) => row.date === today && row.clockInAt)?.clockIn;
 
   return (
     <Screen scroll>
@@ -31,7 +34,7 @@ export default function AttendanceHome() {
             </Text>
             <Text style={[type.body, { color: colors.textSecondary }]}>{todayShift.label}</Text>
             <Text style={[type.meta, { color: colors.muted, marginTop: 8 }]}>
-              Last clock-in: {lastClockIn ?? "Not recorded yet"}
+              Last clock-in: {lastIn ?? "Not recorded yet"}
             </Text>
           </>
         ) : (

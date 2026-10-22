@@ -52,7 +52,13 @@ export default function Updates() {
         )
       ) : visibleNotifications.length ? (
         <View>
-          <Pressable onPress={markNotificationsRead}>
+          <Pressable
+            onPress={() => {
+              void markNotificationsRead().catch((error) => {
+                console.warn("Could not mark notifications as read:", error);
+              });
+            }}
+          >
             <Text style={[type.meta, { color: colors.primary, marginBottom: 10 }]}>Mark all as read</Text>
           </Pressable>
           {visibleNotifications.map((item) => (

@@ -18,7 +18,9 @@ export default function SignUp() {
   const [touched, setTouched] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => clearError, [clearError]);
+  useEffect(() => {
+    clearError();
+  }, [clearError]);
 
   const problems = {
     name: name.trim().length < 2 ? "Enter your full name." : undefined,

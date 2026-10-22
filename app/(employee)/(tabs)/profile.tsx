@@ -1,4 +1,3 @@
-import { useAuth } from "@/src/auth/AuthProvider";
 import { fullName } from "@/src/data";
 import { useStore } from "@/src/store";
 import { APP_NAME, colors, type } from "@/src/theme";
@@ -11,9 +10,9 @@ import { Pressable, Text, View } from "react-native";
 export default function Profile() {
   const router = useRouter();
   const { userId, signOut, setSnack, getEmployee: findEmployee } = useStore();
-  const { signOut: authSignOut } = useAuth();
-  const me = findEmployee(userId ?? "EMP-0001")!;
+  const me = findEmployee(userId ?? "");
   const [signOutOpen, setSignOutOpen] = useState(false);
+  if (!me) return <Screen><Text style={[type.meta, { color: colors.muted }]}>Loading…</Text></Screen>;
 
   return (
     <Screen scroll>
@@ -63,7 +62,7 @@ export default function Profile() {
       <Dialog
         visible={signOutOpen}
         title="Sign out?"
-        body="You’ll return to the login preview. Nothing is saved to a server."
+        body="Your session ends on this device. Your schedule and attendance stay saved."
         primary="Sign out"
         secondary="Cancel"
         tone="danger"
@@ -72,7 +71,6 @@ export default function Profile() {
         onPrimary={() => {
           setSignOutOpen(false);
           signOut();
-          void authSignOut(); // also end the real Firebase session
           router.replace("/(auth)/login");
         }}
       />

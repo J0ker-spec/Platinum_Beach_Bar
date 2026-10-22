@@ -164,6 +164,7 @@ export function TextField({
   autoCapitalize = "none",
   autoComplete,
   onSubmitEditing,
+  maxLength,
 }: {
   label: string;
   value: string;
@@ -178,6 +179,7 @@ export function TextField({
   autoCapitalize?: "none" | "words" | "sentences";
   autoComplete?: React.ComponentProps<typeof TextInput>["autoComplete"];
   onSubmitEditing?: () => void;
+  maxLength?: number;
 }) {
   return (
     <View style={{ gap: 6 }}>
@@ -201,6 +203,7 @@ export function TextField({
           autoComplete={autoComplete}
           autoCorrect={false}
           onSubmitEditing={onSubmitEditing}
+          maxLength={maxLength}
           style={[styles.input, { color: editable ? colors.text : colors.textSecondary }]}
         />
         {right}

@@ -14,10 +14,13 @@ export default function AdminDashboard() {
   const { userId, shifts, attendance, swaps, notifications, registrations, workplaceTimezone, businessName, businessAddress, getEmployee: findEmployee } = useStore();
   const today = workplaceToday(workplaceTimezone);
   const todayShifts = shifts.filter((s) => s.date === today && (s.status === "Published" || s.status === "Updated"));
-  const clocked = attendance.filter((a) => a.date === today && a.clockIn && a.clockIn !== "—" && (!a.clockOut || a.clockOut === "—"));
+  const present = attendance.filter((a) => a.date === today && a.clockIn && a.clockIn !== "—");
+  const clocked = present.filter((a) => !a.clockOut || a.clockOut === "—");
   const clockedIds = new Set(clocked.map((record) => record.employeeId));
+  const presentIds = new Set(present.map((record) => record.employeeId));
   const scheduledIds = new Set(todayShifts.map((shift) => shift.employeeId));
-  const notClockedIn = [...scheduledIds].filter((id) => !clockedIds.has(id)).length;
+  // Employees who have no clock-in at all today; clocking out does not put someone back to "missing".
+  const notClockedIn = [...scheduledIds].filter((id) => !presentIds.has(id)).length;
   const late = attendance.filter((a) => a.date === today && a.status === "Late");
   const pending = swaps.filter((s) => s.status === "Awaiting approval");
   const missing = attendance.filter((a) => a.date === today && a.status === "Incomplete");
@@ -68,14 +71,14 @@ export default function AdminDashboard() {
       <SectionHeader title="Today’s shifts" action="View all" onAction={() => router.push("/(admin)/(tabs)/schedule")} />
       <View style={{ gap: 10 }}>
         {todayShifts.map((shift) => {
-          const employee = findEmployee(shift.employeeId)!;
-          const record = attendance.find((a) => a.employeeId === employee.id && a.date === today);
+          const employee = findEmployee(shift.employeeId);
+          const record = attendance.find((a) => a.employeeId === shift.employeeId && a.date === today);
           return (
             <Card key={shift.id}>
               <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
 
                 <View style={{ flex: 1 }}>
-                  <Text style={[type.card, { color: colors.text }]}>{fullName(employee)}</Text>
+                  <Text style={[type.card, { color: colors.text }]}>{employee ? fullName(employee) : shift.employeeId}</Text>
                   <Text style={[type.meta, { color: colors.textSecondary }]}>
                     {shift.start} – {shift.end} · {shift.label}
                   </Text>
