@@ -202,9 +202,17 @@ describe("7 shifts", () => {
     }
     await assertFails(tooLarge.commit());
 
-    for (let i = 0; i < shifts.length; i += 15) {
+    const accessLimitBatch = writeBatch(db);
+    for (const { id } of shifts.slice(0, 9)) {
+      accessLimitBatch.update(doc(db, "shifts", id), {
+        status: "published", updatedBy: "EMP-0001", updatedAt: serverTimestamp(), revision: 2,
+      });
+    }
+    await assertFails(accessLimitBatch.commit());
+
+    for (let i = 0; i < shifts.length; i += 8) {
       const safeBatch = writeBatch(db);
-      for (const { id } of shifts.slice(i, i + 15)) {
+      for (const { id } of shifts.slice(i, i + 8)) {
         safeBatch.update(doc(db, "shifts", id), {
           status: "published", updatedBy: "EMP-0001", updatedAt: serverTimestamp(), revision: 2,
         });

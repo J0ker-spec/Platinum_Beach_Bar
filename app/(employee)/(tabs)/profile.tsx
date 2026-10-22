@@ -56,7 +56,7 @@ export default function Profile() {
 
       <Card style={{ marginTop: 16 }}>
         <SettingRow icon={Bell} label="Notification preferences" onPress={() => router.push("/(employee)/notification-settings")} />
-        <SettingRow icon={Info} label="About the app" value={APP_NAME} />
+        <SettingRow icon={Info} label="About the app" value={APP_NAME} onPress={() => router.push("/about")} />
         <SettingRow icon={LogOut} label="Sign out" onPress={() => setSignOutOpen(true)} />
       </Card>
 

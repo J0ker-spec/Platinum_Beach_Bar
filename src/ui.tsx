@@ -364,6 +364,9 @@ export function Dialog({
   onPrimary,
   onSecondary,
   tone = "default",
+  primaryLoading = false,
+  primaryDisabled = false,
+  secondaryDisabled = false,
 }: {
   visible: boolean;
   title: string;
@@ -374,6 +377,9 @@ export function Dialog({
   onPrimary: () => void;
   onSecondary?: () => void;
   tone?: "default" | "success" | "warning" | "danger";
+  primaryLoading?: boolean;
+  primaryDisabled?: boolean;
+  secondaryDisabled?: boolean;
 }) {
   const iconColor =
     tone === "success" ? colors.success : tone === "warning" ? colors.warning : tone === "danger" ? colors.error : colors.primary;
@@ -393,7 +399,7 @@ export function Dialog({
           <View style={{ flexDirection: "row", gap: 10, marginTop: 8 }}>
             {secondary ? (
               <View style={{ flex: 1 }}>
-                <Button label={secondary} variant="secondary" onPress={onSecondary} />
+                <Button label={secondary} variant="secondary" onPress={onSecondary} disabled={secondaryDisabled} />
               </View>
             ) : null}
             <View style={{ flex: 1 }}>
@@ -401,6 +407,8 @@ export function Dialog({
                 label={primary}
                 onPress={onPrimary}
                 variant={tone === "danger" ? "danger" : "primary"}
+                loading={primaryLoading}
+                disabled={primaryDisabled}
               />
             </View>
           </View>
