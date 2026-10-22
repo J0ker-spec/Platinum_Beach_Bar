@@ -702,8 +702,8 @@ export function PrototypeProvider({ children }: { children: React.ReactNode }) {
       throw new Error("The break must be shorter than the shift.");
     }
     assertNoShiftOverlap(shifts, shift.employeeId, startAt.getTime(), endAt.getTime(), [shift.id]);
-    const relatedAttendance = await getDocs(query(collection(db, C.attendance), where("shiftId", "==", shift.id)));
-    if (relatedAttendance.size) {
+    const attendanceSnap = await getDoc(doc(db, C.attendance, `${shift.employeeId}_${shift.id}`));
+    if (attendanceSnap.exists()) {
       throw new Error("This shift has attendance records and can't be edited without changing its history.");
     }
     const batch = writeBatch(db);
@@ -746,8 +746,8 @@ export function PrototypeProvider({ children }: { children: React.ReactNode }) {
     const shiftSnap = await getDoc(shiftRef);
     if (!shiftSnap.exists()) throw new Error("This shift is no longer available.");
     const shift = toShift(shiftSnap.id, shiftSnap.data());
-    const relatedAttendance = await getDocs(query(collection(db, C.attendance), where("shiftId", "==", id)));
-    if (relatedAttendance.size) {
+    const attendanceSnap = await getDoc(doc(db, C.attendance, `${shift.employeeId}_${id}`));
+    if (attendanceSnap.exists()) {
       throw new Error("This shift has attendance records and can't be removed.");
     }
     if (shift.status === "Cancelled") throw new Error("This shift is already cancelled.");
@@ -809,7 +809,7 @@ export function PrototypeProvider({ children }: { children: React.ReactNode }) {
       }
       assertNoShiftOverlap(publishSet, shift.employeeId, shift.startAt, shift.endAt, [shift.id]);
     }
-    const shiftsPerBatch = 15;
+    const shiftsPerBatch = 8;
     const batchesPerWave = 10;
     for (let i = 0; i < selectedDrafts.length; i += shiftsPerBatch * batchesPerWave) {
       const commits: Promise<void>[] = [];

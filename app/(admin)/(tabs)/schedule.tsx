@@ -23,6 +23,7 @@ export default function AdminSchedule() {
   const [publishingDraft, setPublishingDraft] = useState(false);
   const [openShift, setOpenShift] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deletingShift, setDeletingShift] = useState(false);
   const dayShifts = shifts.filter((s) => s.date === selected);
   const draftShifts = draftShiftsBetween(shifts, dates[0], dates[6]);
   const allDrafts = shifts
@@ -238,18 +239,24 @@ export default function AdminSchedule() {
           : "The shift will be cancelled for the employee. Its history will be retained."}
         primary={viewShift?.status === "Draft" ? "Delete draft" : "Cancel shift"}
         secondary="Cancel"
+        primaryLoading={deletingShift}
+        secondaryDisabled={deletingShift}
         onSecondary={() => setConfirmDelete(false)}
         onPrimary={async () => {
-          if (!viewShift) return;
+          if (!viewShift || deletingShift) return;
+          setDeletingShift(true);
           try {
             const result = await deleteShift(viewShift.id);
             setSnack({ message: result === "deleted" ? "Draft shift deleted" : "Shift cancelled", tone: "success" });
+            setConfirmDelete(false);
+            setOpenShift(null);
           } catch (error) {
+            console.error("Could not remove shift:", error);
             const detail = error instanceof Error ? error.message : "Try again.";
             setSnack({ message: `Couldn't remove the shift: ${detail}`, tone: "warning" });
+          } finally {
+            setDeletingShift(false);
           }
-          setConfirmDelete(false);
-          setOpenShift(null);
         }}
       />
     </Screen>
