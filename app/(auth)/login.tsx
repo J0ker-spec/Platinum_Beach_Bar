@@ -24,6 +24,10 @@ const MESSAGES: Partial<Record<AuthStatus, { title: string; body: string }>> = {
     title: "Awaiting administrator approval",
     body: "Your sign-up was received. Once an administrator confirms your account and assigns your role you'll be able to sign in.",
   },
+  registrationError: {
+    title: "Approval request not saved",
+    body: "Your account exists, but the administrator could not receive your request. Sign in again and retry from the email verification screen.",
+  },
   deactivated: {
     title: "Account deactivated",
     body: "Your access to this workplace has ended. Contact your administrator if you think this is a mistake.",

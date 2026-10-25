@@ -41,6 +41,7 @@ export type AuthStatus =
   | "checking" // verifying authorization / linking account
   | "unverified" // email/password account whose email address has not been verified yet
   | "pendingApproval" // email verified, but no administrator has approved + assigned a role yet
+  | "registrationError" // the account exists, but its approval request could not be saved
   | "ready"
   | "unauthorized" // Google account has no employee authorization
   | "alreadyLinked" // authorization claimed by a different Google account
@@ -58,6 +59,7 @@ type AuthCtx = {
   sendPasswordReset: (email: string) => Promise<boolean>;
   resendVerification: () => Promise<boolean>;
   refreshVerification: () => Promise<boolean>;
+  retryRegistration: () => Promise<boolean>;
   clearError: () => void;
   signOut: () => Promise<void>;
   canSignIn: boolean;
@@ -206,18 +208,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } else {
           // Email verified but no authorization yet: register for administrator approval.
           // Doc id = auth uid, so a user can only have one pending registration (create-once).
-          await setDoc(
-            doc(db, C.registrations, user.uid),
-            {
-              email: emailKey,
-              name: user.displayName ?? user.email ?? "",
-              status: "pending",
-              createdAt: serverTimestamp(),
-            },
-            { merge: true }
-          ).catch((e) => {
-            console.warn("Could not write registration document:", e);
-          });
+          try {
+            await setDoc(
+              doc(db, C.registrations, user.uid),
+              {
+                email: emailKey,
+                name: user.displayName ?? user.email ?? "",
+                status: "pending",
+                createdAt: serverTimestamp(),
+              },
+              { merge: true }
+            );
+          } catch {
+            if (isStale()) return;
+            setError("Your approval request could not be saved. Check your connection and retry saving it.");
+            setStatus("registrationError");
+            return;
+          }
           if (isStale()) return;
           setStatus("pendingApproval");
           return;
@@ -283,16 +290,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
       if (name.trim()) await updateProfile(cred.user, { displayName: name.trim() });
-      await setDoc(
-        doc(db, C.registrations, cred.user.uid),
-        {
-          email: email.trim().toLowerCase(),
-          name: name.trim() || email.trim(),
-          status: "pending",
-          createdAt: serverTimestamp(),
-        },
-        { merge: true }
-      ).catch((e) => console.warn("Failed to store pending registration at signup:", e));
+      try {
+        await setDoc(
+          doc(db, C.registrations, cred.user.uid),
+          {
+            email: email.trim().toLowerCase(),
+            name: name.trim() || email.trim(),
+            status: "pending",
+            createdAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch {
+        setError("Your account was created, but your approval request could not be saved. Retry saving it on the next screen.");
+        setStatus("registrationError");
+        await sendEmailVerification(cred.user).catch(() => undefined);
+        return true;
+      }
       await sendEmailVerification(cred.user).catch(() => undefined); // can be re-sent from the verify screen
       return true;
     } catch (e: any) {
@@ -358,6 +372,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const retryRegistration = useCallback(async () => {
+    const user = auth.currentUser;
+    if (!user?.email) {
+      setError("Sign in again to save your approval request.");
+      return false;
+    }
+    setError(null);
+    try {
+      await setDoc(
+        doc(db, C.registrations, user.uid),
+        {
+          email: user.email.toLowerCase(),
+          name: user.displayName ?? user.email,
+          status: "pending",
+          createdAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      if (user.emailVerified) {
+        await resolveIdentity(user);
+      } else {
+        setStatus("unverified");
+      }
+      return true;
+    } catch {
+      setError("Your approval request still could not be saved. Check your connection and try again.");
+      setStatus("registrationError");
+      return false;
+    }
+  }, []);
+
   const clearError = useCallback(() => setError(null), []);
 
   const signOut = useCallback(async () => {
@@ -386,11 +431,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       sendPasswordReset,
       resendVerification,
       refreshVerification,
+      retryRegistration,
       clearError,
       signOut,
       canSignIn: !!promptGoogle,
     }),
-    [status, profile, googleEmail, error, signInWithGoogle, signUpWithEmail, signInWithEmail, sendPasswordReset, resendVerification, refreshVerification, clearError, signOut, promptGoogle]
+    [status, profile, googleEmail, error, signInWithGoogle, signUpWithEmail, signInWithEmail, sendPasswordReset, resendVerification, refreshVerification, retryRegistration, clearError, signOut, promptGoogle]
   );
   return (
     <Ctx.Provider value={value}>

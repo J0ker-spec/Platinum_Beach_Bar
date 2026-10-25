@@ -10,14 +10,12 @@ import { Text, View } from "react-native";
 
 export default function VerifyEmail() {
   const router = useRouter();
-  const { status, error, googleEmail, resendVerification, refreshVerification, signOut, clearError } = useAuth();
+  const { status, error, googleEmail, resendVerification, refreshVerification, retryRegistration, signOut } = useAuth();
   const [busy, setBusy] = useState<"check" | "resend" | null>(null);
   const [sent, setSent] = useState(false);
   const [notYet, setNotYet] = useState(false);
-
-  useEffect(() => {
-    clearError();
-  }, [clearError]);
+  const [registrationSaved, setRegistrationSaved] = useState(false);
+  const registrationNeedsRetry = status === "registrationError" || !!error?.includes("approval request could not be saved");
 
   // Signed out (or never signed in) -> back to sign up. `auth.currentUser` is checked as well
   // because the auth listener can still report "signedOut" for a moment after sign-up.
@@ -32,12 +30,17 @@ export default function VerifyEmail() {
     setBusy("check");
     setSent(false);
     const verified = await refreshVerification();
-    setNotYet(!verified);
+    setNotYet(!verified && !auth.currentUser?.emailVerified);
     setBusy(null);
   };
   const resend = async () => {
     setBusy("resend");
     setSent(await resendVerification());
+    setBusy(null);
+  };
+  const retrySave = async () => {
+    setBusy("check");
+    setRegistrationSaved(await retryRegistration());
     setBusy(null);
   };
 
@@ -55,10 +58,18 @@ export default function VerifyEmail() {
       </View>
       {error ? <FormError body={error} /> : null}
       {sent ? <Text style={[type.meta, { color: colors.success, textAlign: "center" }]}>Verification email sent again.</Text> : null}
+      {registrationSaved ? (
+        <Text style={[type.meta, { color: colors.success, textAlign: "center" }]}>
+          Your approval request is saved. Verify your email, then come back and check again.
+        </Text>
+      ) : null}
       {notYet ? (
         <Text style={[type.meta, { color: colors.warning, textAlign: "center" }]}>
           That address is not verified yet. Open the link in the email (check spam too), then try again.
         </Text>
+      ) : null}
+      {registrationNeedsRetry ? (
+        <Button label="Retry saving approval request" variant="secondary" onPress={retrySave} loading={busy === "check"} />
       ) : null}
       <Button label="I've verified my email" onPress={check} loading={busy === "check"} />
       <Button label="Resend email" variant="secondary" onPress={resend} loading={busy === "resend"} />

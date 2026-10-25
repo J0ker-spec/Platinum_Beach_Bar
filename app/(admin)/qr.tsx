@@ -15,7 +15,7 @@ function QrCodeView({ size, payload }: { size: number; payload: string | null })
       </View>
     );
   }
-  return <QRCode value={payload} size={size} color={colors.onPrimary} backgroundColor="#FFFFFF" ecl="M" />;
+  return <QRCode value={payload} size={size} color={colors.text} backgroundColor="#FFFFFF" ecl="M" />;
 }
 
 export default function Qr() {

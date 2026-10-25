@@ -2,7 +2,6 @@ import { AuthProvider } from "@/src/auth/AuthProvider";
 import { PrototypeProvider, useStore } from "@/src/store";
 import { colors } from "@/src/theme";
 import { Snackbar } from "@/src/ui";
-import { Inter_400Regular, Inter_600SemiBold, Inter_700Bold, useFonts } from "@expo-google-fonts/inter";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
@@ -27,13 +26,9 @@ function Gate() {
 }
 
 export default function RootLayout() {
-  const [loaded] = useFonts({ Inter_400Regular, Inter_600SemiBold, Inter_700Bold });
-
   useEffect(() => {
-    if (loaded) SplashScreen.hideAsync().catch(() => undefined);
-  }, [loaded]);
-
-  if (!loaded) return null;
+    SplashScreen.hideAsync().catch(() => undefined);
+  }, []);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

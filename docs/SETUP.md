@@ -44,3 +44,6 @@ Rules tests need the Firestore emulator and **JDK 21+** (`java -version`).
    Settings → Authorized domains. Repeat this for any custom domain you attach in Vercel.
 5. Keep Firestore rules deployed with `npx firebase deploy --only firestore:rules --project <id>`.
    Hosting the web bundle on Vercel does not deploy Firebase rules or change the Firebase project.
+6. PlatinumX is installable as a PWA. On Android/desktop Chrome, use the browser's **Install app** or
+   **Add to Home screen** action. On iPhone/iPad, open the site in Safari, tap **Share**, then **Add to Home Screen**.
+   The PWA requires an internet connection; it does not cache workplace data for offline use.

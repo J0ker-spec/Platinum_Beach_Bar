@@ -1,5 +1,11 @@
 {
   "buildCommand": "npm run build:web",
   "outputDirectory": "dist",
-  "framework": null
+  "framework": null,
+  "rewrites": [
+    {
+      "source": "/:path((?!_expo/|assets/|icons/|manifest\\.json$|favicon\\.ico$|metadata\\.json$).*)",
+      "destination": "/index.html"
+    }
+  ]
 }
