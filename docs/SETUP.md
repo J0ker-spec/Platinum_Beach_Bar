@@ -31,3 +31,16 @@ Until configured the login screen shows "Backend not configured" — it never fa
 ## 5. Tests
 Rules tests need the Firestore emulator and **JDK 21+** (`java -version`).
 `npm run test:rules` (wraps `firebase emulators:exec`). Tests use synthetic users only.
+
+## 6. Deploy the web app to Vercel
+1. Import this GitHub repository in Vercel and use the repository root as the project root. `vercel.json`
+   configures the web export command (`npm run build:web`) and its `dist` output directory.
+2. In Vercel project settings, add the six `EXPO_PUBLIC_FIREBASE_*` values from `.env.example` for
+   **Production**, **Preview**, and **Development** as needed. These public Firebase web configuration
+   values are compiled into the browser app; never add a service-account key or administrator password.
+3. Redeploy after adding or changing environment variables. To build locally, run `npm run build:web`;
+   Expo writes the static web export to `dist/`.
+4. After Vercel assigns the site a domain, add that hostname to Firebase Console → Authentication →
+   Settings → Authorized domains. Repeat this for any custom domain you attach in Vercel.
+5. Keep Firestore rules deployed with `npx firebase deploy --only firestore:rules --project <id>`.
+   Hosting the web bundle on Vercel does not deploy Firebase rules or change the Firebase project.

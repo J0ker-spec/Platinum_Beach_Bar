@@ -12,11 +12,12 @@ import { Pressable, Text, View } from "react-native";
 export default function EmployeeDetail() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { employees, shifts, attendance, upsertEmployee, setEmployeeRole, userId, setSnack, getEmployee: findEmployee } = useStore();
+  const { employees, shifts, attendance, upsertEmployee, deleteEmployee, setEmployeeRole, userId, setSnack, getEmployee: findEmployee } = useStore();
   const person = employees.find((e) => e.id === id) ?? findEmployee(String(id));
   const [menu, setMenu] = useState(false);
   const [deactivate, setDeactivate] = useState(false);
   const [remove, setRemove] = useState(0);
+  const [deleting, setDeleting] = useState(false);
 
   if (!person) {
     return (
@@ -39,6 +40,8 @@ export default function EmployeeDetail() {
     .filter((a) => a.employeeId === person.id)
     .sort((a, b) => (b.clockInAt ?? 0) - (a.clockInAt ?? 0) || b.date.localeCompare(a.date))
     .slice(0, 3);
+  const activeAdminCount = employees.filter((employee) => employee.isAdmin && employee.status === "Active").length;
+  const canDelete = person.id !== userId && (!person.isAdmin || person.status !== "Active" || activeAdminCount > 1);
 
   return (
     <Screen scroll>
@@ -141,7 +144,7 @@ export default function EmployeeDetail() {
             }}
           />
         )}
-        <Button label="Delete permanently" variant="danger" onPress={() => { setMenu(false); setRemove(1); }} />
+        {canDelete && <Button label="Delete permanently" variant="danger" onPress={() => { setMenu(false); setRemove(1); }} />}
         <Button label="Close" variant="ghost" onPress={() => setMenu(false)} />
       </Sheet>
 
@@ -180,14 +183,28 @@ export default function EmployeeDetail() {
         tone="danger"
         icon={UserX}
         title="Are you absolutely sure?"
-        body={`${fullName(person)} and their linked history would be removed. This is a prototype, so nothing is actually deleted.`}
-        primary="Delete (preview)"
+        body={`Permanently remove ${fullName(person)} and their linked shifts, attendance, swaps, notifications, and workplace access? This can't be undone. Their Firebase sign-in account will remain, but it won't have access to this workplace.`}
+        primary="Delete employee"
+        primaryLoading={deleting}
+        secondaryDisabled={deleting}
         secondary="Keep employee"
         onSecondary={() => setRemove(0)}
-        onPrimary={() => {
-          setRemove(0);
-          setSnack({ message: "Deletion previewed — no data changed", tone: "warning" });
-          router.back();
+        onPrimary={async () => {
+          if (deleting) return;
+          setDeleting(true);
+          try {
+            await deleteEmployee(person.id);
+            setRemove(0);
+            setSnack({ message: "Employee and linked workplace records deleted", tone: "success" });
+            router.back();
+          } catch (error) {
+            setSnack({
+              message: error instanceof Error ? error.message : "Employee deletion failed. Try again.",
+              tone: "warning",
+            });
+          } finally {
+            setDeleting(false);
+          }
         }}
       />
     </Screen>

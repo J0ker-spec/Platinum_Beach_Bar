@@ -111,6 +111,45 @@ describe("1-4 identity & roles", () => {
     const db = stranger().firestore();
     await assertFails(setDoc(doc(db, "userLinks", "u-x"), { employeeId: "EMP-0001", linkedAt: serverTimestamp() }));
   });
+  it("only admins can delete a deactivated employee and its directory and authorization", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "directory", "EMP-0004"), { displayName: "Sam T", title: "x", status: "deactivated", role: "employee" });
+      await setDoc(doc(db, "employeeAuthorizations", "sam@test.example"), { employeeId: "EMP-0004", claimedByUid: "u-sam" });
+    });
+    const adminDb = admin().firestore();
+    await assertFails(deleteDoc(doc(adminDb, "employees", "EMP-0002")));
+    await assertFails(deleteDoc(doc(adminDb, "employees", "EMP-0001")));
+    await assertSucceeds(deleteDoc(doc(maya().firestore(), "employees", "EMP-0004")));
+    await assertSucceeds(deleteDoc(doc(adminDb, "directory", "EMP-0004")));
+    await assertSucceeds(deleteDoc(doc(adminDb, "employeeAuthorizations", "sam@test.example")));
+    await assertSucceeds(deleteDoc(doc(adminDb, "employees", "EMP-0004")));
+  });
+  it("only admins can delete a deactivated employee's linked history", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "shifts", "sam-shift"), {
+        employeeId: "EMP-0004", status: "published", createdBy: "EMP-0001",
+      });
+      await setDoc(doc(db, "attendance", "EMP-0004_sam-shift"), {
+        employeeId: "EMP-0004", shiftId: "sam-shift",
+      });
+      await setDoc(doc(db, "attendance", "EMP-0004_sam-shift", "corrections", "correction-1"), {
+        adminId: "EMP-0001", changedAt: Timestamp.now(),
+      });
+      await setDoc(doc(db, "shiftSwapRequests", "sam-swap"), {
+        fromEmployeeId: "EMP-0004", toEmployeeId: "EMP-0002",
+      });
+      await setDoc(doc(db, "notifications", "sam-notification"), { recipientId: "EMP-0004" });
+    });
+    const adminDb = admin().firestore();
+    await assertFails(deleteDoc(doc(maya().firestore(), "shifts", "sam-shift")));
+    await assertSucceeds(deleteDoc(doc(adminDb, "attendance", "EMP-0004_sam-shift", "corrections", "correction-1")));
+    await assertSucceeds(deleteDoc(doc(adminDb, "attendance", "EMP-0004_sam-shift")));
+    await assertSucceeds(deleteDoc(doc(adminDb, "shifts", "sam-shift")));
+    await assertSucceeds(deleteDoc(doc(adminDb, "shiftSwapRequests", "sam-swap")));
+    await assertSucceeds(deleteDoc(doc(adminDb, "notifications", "sam-notification")));
+  });
 });
 
 describe("5-6 employee creation & unique IDs", () => {

@@ -24,25 +24,28 @@ employees/{EMP-0001} = { role, status, ... }     <- the ONLY source of role/stat
 
 | Collection | Doc id | Core fields | Who can read | Who can write |
 |---|---|---|---|---|
-| `employees` | `EMP-0001`… | firstName, lastName, email, phone, title, role (`employee`/`admin`), status (`active`/`deactivated`), createdBy, createdAt, updatedAt | admin; owner (own doc, even if deactivated) | admin create/update (not own role/status); owner: `phone` only; never delete |
-| `employeeAuthorizations` | lowercase email | employeeId, claimedByUid, claimedAt | admin; the matching verified email | admin create / release claim; owner claims once |
+| `employees` | `EMP-0001`… | firstName, lastName, email, phone, title, role (`employee`/`admin`), status (`active`/`deactivated`), createdBy, createdAt, updatedAt | admin; owner (own doc, even if deactivated) | admin create/update (not own role/status); owner: `phone` only; admin may delete a deactivated, non-self employee |
+| `employeeAuthorizations` | lowercase email | employeeId, claimedByUid, claimedAt | admin; the matching verified email | admin create / release claim; owner claims once; admin may delete with employee deletion |
 | `userLinks` | Firebase uid | employeeId, linkedAt | owner, admin | owner create once (validated); admin delete (re-bind) |
-| `directory` | employee id | displayName, title, role, status | any active employee | admin. Minimal fields so swap pickers need no private data |
+| `directory` | employee id | displayName, title, role, status | any active employee | admin; removable with employee deletion. Minimal fields so swap pickers need no private data |
 | `systemMeta/counters` | – | employeeSeq | admin | admin, +1 only. **Seeded from console** |
 | `systemMeta/maintenance` | – | lastExportAt, lastExportRangeEnd, reminder state | admin | admin |
 | `workplaceSettings/main` | – | businessName, businessAddress, businessPhone, businessEmail, timezone, clockInEarlyMinutes, clockInLateMinutes | active employees | admin |
 | `qrCredentials/current` | – | token (≥32 chars), version, rotatedBy, rotatedAt | **admin only** | admin; version must increment |
-| `shifts` | auto | employeeId, date, startAt, endAt (timestamps), breakMinutes, label, location, notes, status (`draft`/`published`/`cancelled`), createdBy, updatedBy, createdAt, updatedAt, revision, changedAfterPublish | admin; employee: own **published** only | admin |
-| `attendance` | `{employeeId}_{shiftId}` | employeeId, shiftId, shiftDate, clockInAt (server), clockInReportedAt (device), clockInSource, clockInActionId, qrProof, clockOut* (same), reviewStatus (`confirmed`/`pending_review`/`rejected`), late, lastCorrectionId | admin; owner | employee: create clock-in once, set clock-out once; admin: only with a paired correction doc; **never deleted** |
-| `attendance/{id}/corrections` | auto | adminId, changedAt (server), original, updated, note | admin | admin create only (append-only) |
-| `shiftSwapRequests` | auto | fromEmployeeId, toEmployeeId, shiftId, validated shift summary, reason, status, createdAt, updatedAt, decidedBy | admin; the two parties | see state machine below |
+| `shifts` | auto | employeeId, date, startAt, endAt (timestamps), breakMinutes, label, location, notes, status (`draft`/`published`/`cancelled`), createdBy, updatedBy, createdAt, updatedAt, revision, changedAfterPublish | admin; employee: own **published** only | admin; removable with employee deletion |
+| `attendance` | `{employeeId}_{shiftId}` | employeeId, shiftId, shiftDate, clockInAt (server), clockInReportedAt (device), clockInSource, clockInActionId, qrProof, clockOut* (same), reviewStatus (`confirmed`/`pending_review`/`rejected`), late, lastCorrectionId | admin; owner | employee: create clock-in once, set clock-out once; admin corrections; deletable only with employee deletion |
+| `attendance/{id}/corrections` | auto | adminId, changedAt (server), original, updated, note | admin | admin create only; removable only with employee deletion |
+| `shiftSwapRequests` | auto | fromEmployeeId, toEmployeeId, shiftId, validated shift summary, reason, status, createdAt, updatedAt, decidedBy | admin; the two parties | see state machine below; removable with employee deletion |
 | `announcements` | auto | title, body, priority, status, audience (`all`/`selected`), audienceIds, publishedBy, publishedAt | admin; active employee if published and in audience | admin |
-| `notifications` | auto | recipientId, type, title, refType, refId, createdAt, expiresAt, read, createdBy | recipient | admin create; peers only for swap notices; recipient: mark read / delete |
+| `notifications` | auto | recipientId, type, title, refType, refId, createdAt, expiresAt, read, createdBy | recipient | admin create; peers only for swap notices; recipient: mark read / delete; admin may delete with employee deletion |
 | `employees/{employeeId}/notificationPreferences/current` | fixed | schedule, announcements, swaps, updatedAt | admin, owner | owner |
 | `exportLogs` | auto | exportedAt, exportedBy, format, rangeStart, rangeEnd, recordCount, confirmedSaved | admin | admin create only |
 | `auditLogs` | auto | actorId, at, action, refs | admin | admin create only |
 
-Notes: notification docs hold IDs/references only (never copies of schedules or attendance). No photos, QR images, or
+Deleting a deactivated employee removes their workplace authorization, identity link, shifts, attendance and
+corrections, swaps, notifications, directory entry, and notification preferences. Employee IDs are not reused;
+workplace settings, exports, and audit logs are retained. The Firebase Authentication account itself is not deleted.
+Notification docs hold IDs/references only (never copies of schedules or attendance). No photos, QR images, or
 exported files are stored. `exportLogs` stores metadata only.
 
 The administrator configures an IANA workplace time zone before creating shifts. Shift wall times are converted to

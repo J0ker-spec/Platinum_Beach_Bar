@@ -42,6 +42,7 @@ import {
   writeBatch,
   Timestamp,
   deleteField,
+  type DocumentReference,
   type Unsubscribe,
   type Query,
 } from "firebase/firestore";
@@ -255,6 +256,7 @@ type Store = {
   saveNotificationPreferences: (preferences: { schedule: boolean; announcements: boolean; swaps: boolean }) => Promise<void>;
   setClockedIn: (value: boolean, time?: string) => void;
   upsertEmployee: (employee: Employee) => Promise<void>;
+  deleteEmployee: (id: string) => Promise<void>;
   addShift: (shift: Shift) => Promise<void>;
   addShifts: (shifts: Shift[]) => Promise<void>;
   updateShift: (shift: Shift) => Promise<void>;
@@ -680,6 +682,89 @@ export function PrototypeProvider({ children }: { children: React.ReactNode }) {
     },
     [employees, myId]
   );
+
+  const deleteEmployee = useCallback(async (employeeId: string) => {
+    if (role !== "admin" || !myId) throw new Error("Only an administrator can delete employees.");
+    if (employeeId === myId) throw new Error("You can't delete your own employee account.");
+
+    const employeesSnapshot = await getDocs(collection(db, C.employees));
+    const employeeSnapshot = employeesSnapshot.docs.find((snapshot) => snapshot.id === employeeId);
+    if (!employeeSnapshot) throw new Error("This employee no longer exists.");
+    const target = employeeSnapshot.data();
+    const activeAdminCount = employeesSnapshot.docs.filter(
+      (snapshot) => snapshot.data().role === "admin" && snapshot.data().status === "active"
+    ).length;
+    if (target.role === "admin" && target.status === "active" && activeAdminCount <= 1) {
+      throw new Error("The last active administrator can't be deleted.");
+    }
+
+    const employeeRef = doc(db, C.employees, employeeId);
+    const directoryRef = doc(db, C.directory, employeeId);
+    const directorySnapshot = await getDoc(directoryRef);
+    if (target.status !== "deactivated") {
+      const deactivate = writeBatch(db);
+      deactivate.update(employeeRef, { status: "deactivated", updatedAt: serverTimestamp() });
+      if (directorySnapshot.exists()) deactivate.update(directoryRef, { status: "deactivated" });
+      try {
+        await deactivate.commit();
+      } catch (error) {
+        throw writeError(error, "The employee could not be deactivated before deletion.");
+      }
+    }
+
+    try {
+      const [shiftSnapshots, attendanceSnapshots, fromSwapSnapshots, toSwapSnapshots, notificationSnapshots, userLinkSnapshots] =
+        await Promise.all([
+          getDocs(query(collection(db, C.shifts), where("employeeId", "==", employeeId))),
+          getDocs(query(collection(db, C.attendance), where("employeeId", "==", employeeId))),
+          getDocs(query(collection(db, C.swaps), where("fromEmployeeId", "==", employeeId))),
+          getDocs(query(collection(db, C.swaps), where("toEmployeeId", "==", employeeId))),
+          getDocs(query(collection(db, C.notifications), where("recipientId", "==", employeeId))),
+          getDocs(query(collection(db, C.userLinks), where("employeeId", "==", employeeId))),
+        ]);
+      const corrections = await Promise.all(
+        attendanceSnapshots.docs.map((snapshot) => getDocs(collection(db, C.attendance, snapshot.id, "corrections")))
+      );
+      const preferences = await getDocs(collection(db, C.employees, employeeId, "notificationPreferences"));
+      const authorizationRef = doc(db, C.authorizations, String(target.email ?? "").toLowerCase());
+      const authorizationSnapshot = target.email ? await getDoc(authorizationRef) : null;
+
+      const relatedRefs = new Map<string, DocumentReference>();
+      const addSnapshots = (snapshots: { docs: { ref: DocumentReference }[] }[]) => {
+        for (const snapshot of snapshots) {
+          for (const item of snapshot.docs) relatedRefs.set(item.ref.path, item.ref);
+        }
+      };
+      addSnapshots([
+        ...corrections,
+        attendanceSnapshots,
+        shiftSnapshots,
+        fromSwapSnapshots,
+        toSwapSnapshots,
+        notificationSnapshots,
+        userLinkSnapshots,
+        preferences,
+      ]);
+
+      const refs = [...relatedRefs.values()];
+      for (let index = 0; index < refs.length; index += 8) {
+        const batch = writeBatch(db);
+        for (const ref of refs.slice(index, index + 8)) batch.delete(ref);
+        await batch.commit();
+      }
+
+      const finish = writeBatch(db);
+      if (authorizationSnapshot?.exists()) finish.delete(authorizationRef);
+      if (directorySnapshot.exists()) finish.delete(directoryRef);
+      finish.delete(employeeRef);
+      await finish.commit();
+    } catch (error) {
+      const failure = writeError(error, "Employee deletion could not be completed.");
+      throw new Error(
+        `Deletion stopped before completion. The employee remains deactivated; retry deletion to remove remaining records. ${failure.message}`
+      );
+    }
+  }, [myId, role]);
 
   const addShifts = useCallback(async (list: Shift[]) => {
     if (!myId) throw new Error("Sign in is required to create shifts.");
@@ -1684,6 +1769,7 @@ const addSwap = useCallback(
       saveNotificationPreferences,
       setClockedIn,
       upsertEmployee,
+      deleteEmployee,
       addShift,
       addShifts,
       updateShift,
@@ -1705,7 +1791,7 @@ const addSwap = useCallback(
       rejectRegistration,
       setEmployeeRole,
     }),
-    [role, myId, sortedEmployees, shifts, attendance, swaps, displayAnnouncements, notifications, notificationPreferences, pendingRegistrations, clockedIn, lastClockIn, qrLabel, qrToken, snack, listenerError, workplaceTimezone, clockInEarlyMinutes, clockInLateMinutes, businessDetails, retry, saveWorkplaceSettings, getEmployee, employeeName, setClockedIn, saveNotificationPreferences, upsertEmployee, addShift, addShifts, updateShift, deleteShift, publishSchedule, publishAnnouncement, saveAnnouncementDraft, deleteAnnouncement, replaceQr, markNotificationsRead, correctAttendance, updateSwap, respondToSwap, addSwap, cancelSwap, clockIn, clockOut, approveRegistration, rejectRegistration, setEmployeeRole, authSignOut]
+    [role, myId, sortedEmployees, shifts, attendance, swaps, displayAnnouncements, notifications, notificationPreferences, pendingRegistrations, clockedIn, lastClockIn, qrLabel, qrToken, snack, listenerError, workplaceTimezone, clockInEarlyMinutes, clockInLateMinutes, businessDetails, retry, saveWorkplaceSettings, getEmployee, employeeName, setClockedIn, saveNotificationPreferences, upsertEmployee, deleteEmployee, addShift, addShifts, updateShift, deleteShift, publishSchedule, publishAnnouncement, saveAnnouncementDraft, deleteAnnouncement, replaceQr, markNotificationsRead, correctAttendance, updateSwap, respondToSwap, addSwap, cancelSwap, clockIn, clockOut, approveRegistration, rejectRegistration, setEmployeeRole, authSignOut]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

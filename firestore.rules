@@ -15,6 +15,10 @@ service cloud.firestore {
     function isActive() { return hasLink() && me().data.status == 'active'; }
     function isAdmin() { return isActive() && me().data.role == 'admin'; }
     function isMe(employeeId) { return isActive() && myId() == employeeId; }
+    function isDeactivatedEmployee(employeeId) {
+      return exists(/databases/$(database)/documents/employees/$(employeeId))
+        && get(/databases/$(database)/documents/employees/$(employeeId)).data.status == 'deactivated';
+    }
     function onlyKeys(keys) { return request.resource.data.keys().hasOnly(keys); }
     function changedOnly(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
     function pad4(n) {
@@ -61,7 +65,7 @@ service cloud.firestore {
       // Admin releases a claim so the employee can sign in with another Google account.
       allow update: if isAdmin() && changedOnly(['claimedByUid', 'claimedAt'])
         && request.resource.data.claimedByUid == null;
-      allow delete: if false;
+      allow delete: if isAdmin() && isDeactivatedEmployee(resource.data.employeeId);
     }
 
     // registrations/{uid}: a verified sign-up waiting for an administrator to approve it and
@@ -120,7 +124,7 @@ service cloud.firestore {
         && request.resource.data.phone.size() <= 32
         && request.resource.data.updatedAt == request.time;
 
-      allow delete: if false; // deactivate instead; IDs are never reused
+      allow delete: if isAdmin() && employeeId != myId() && resource.data.status == 'deactivated';
     }
 
     // Minimal colleague directory (name, title, and role) for swap pickers. No contact data.
@@ -130,7 +134,7 @@ service cloud.firestore {
         && onlyKeys(['displayName', 'title', 'status', 'role'])
         && request.resource.data.status in ['active', 'deactivated']
         && request.resource.data.role in ['employee', 'admin'];
-      allow delete: if false;
+      allow delete: if isAdmin() && isDeactivatedEmployee(employeeId);
     }
 
     // --------------------------------------------------------------- system
@@ -218,8 +222,9 @@ service cloud.firestore {
         && request.resource.data.revision == resource.data.revision + 1
         && !exists(/databases/$(database)/documents/attendance/$(resource.data.employeeId + '_' + shiftId));
       allow delete: if isAdmin()
-        && resource.data.status == 'draft'
-        && !exists(/databases/$(database)/documents/attendance/$(resource.data.employeeId + '_' + shiftId));
+        && (isDeactivatedEmployee(resource.data.employeeId)
+            || (resource.data.status == 'draft'
+                && !exists(/databases/$(database)/documents/attendance/$(resource.data.employeeId + '_' + shiftId))));
       function validShift() {
         let d = request.resource.data;
         return d.keys().hasOnly(['employeeId', 'date', 'startAt', 'endAt', 'breakMinutes', 'label', 'notes', 'location',
@@ -237,7 +242,8 @@ service cloud.firestore {
     }
 
     // ----------------------------------------------------------- attendance
-    // attendance/{employeeId_shiftId}: one record per shift. Never deleted.
+    // attendance/{employeeId_shiftId}: one record per shift; admins may remove it only
+    // as part of deleting a deactivated employee.
     match /attendance/{recordId} {
       allow read: if isAdmin() || (isActive() && resource.data.employeeId == myId());
 
@@ -247,7 +253,7 @@ service cloud.firestore {
 
       // Clock-out (employee) or correction (admin; must be paired with an immutable correction doc).
       allow update: if isActive() && validClockOut() || isAdmin() && validAdminUpdate();
-      allow delete: if false;
+      allow delete: if isAdmin() && isDeactivatedEmployee(resource.data.employeeId);
 
       function qrOk(proof) {
         return proof == get(/databases/$(database)/documents/qrCredentials/current).data.token;
@@ -336,7 +342,9 @@ service cloud.firestore {
           && request.resource.data.adminId == myId()
           && request.resource.data.changedAt == request.time
           && request.resource.data.keys().hasOnly(['adminId', 'changedAt', 'original', 'updated', 'note']);
-        allow update, delete: if false; // append-only audit trail
+        allow update: if false;
+        allow delete: if isAdmin()
+          && isDeactivatedEmployee(get(/databases/$(database)/documents/attendance/$(recordId)).data.employeeId);
       }
     }
 
@@ -417,7 +425,9 @@ service cloud.firestore {
                         && get(/databases/$(database)/documents/shifts/$(resource.data.receivedShiftId)).data.startAt > request.time
                         && getAfter(/databases/$(database)/documents/shifts/$(resource.data.receivedShiftId)).data.employeeId == resource.data.fromEmployeeId))
                 && get(/databases/$(database)/documents/employees/$(resource.data.toEmployeeId)).data.status == 'active'));
-      allow delete: if false;
+      allow delete: if isAdmin()
+        && (isDeactivatedEmployee(resource.data.fromEmployeeId)
+            || isDeactivatedEmployee(resource.data.toEmployeeId));
     }
 
     // -------------------------------------------------------- announcements
@@ -460,7 +470,8 @@ service cloud.firestore {
         && request.resource.data.expiresAt <= request.time + duration.value(153, 'd')
         && (isAdmin() || validPeerNotice());
       allow update: if isActive() && resource.data.recipientId == myId() && changedOnly(['read']);
-      allow delete: if isActive() && (resource.data.recipientId == myId() || isAdmin());
+      allow delete: if (isActive() && (resource.data.recipientId == myId() || isAdmin()))
+        || (isAdmin() && isDeactivatedEmployee(resource.data.recipientId));
 
       function validPeerNotice() {
         let d = request.resource.data;
