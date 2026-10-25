@@ -4,7 +4,7 @@ import { useStore } from "@/src/store";
 import { colors, type } from "@/src/theme";
 import { Avatar, BackHeader, Button, Card, Dialog, FilterChip, Screen, TextField } from "@/src/ui";
 import { normalizeTime, repeatDatesForMonths } from "@/src/lib/time";
-import { weekdayOfIsoDate } from "@/src/lib/scheduling";
+import { minutesOfDay, weekdayOfIsoDate } from "@/src/lib/scheduling";
 import { workplaceToday } from "@/src/lib/time";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
@@ -71,7 +71,9 @@ export default function ShiftForm() {
   const staff = employees.filter(
     (e) => (e.status === "Active" || e.id === existing?.employeeId) && (!e.isAdmin || e.id === existing?.employeeId)
   );
-  const [employeeId, setEmployeeId] = useState(staff[0]?.id ?? "");
+  // A new shift starts with nobody selected so a shift can never be saved to the wrong person by
+  // accident; the only exception is a workplace with exactly one eligible employee.
+  const [employeeId, setEmployeeId] = useState("");
   const [date, setDate] = useState(today);
   const [start, setStart] = useState("9:00 AM");
   const [end, setEnd] = useState("5:00 PM");
@@ -83,6 +85,7 @@ export default function ShiftForm() {
   const [days, setDays] = useState<number[]>([weekdayOfIsoDate(today)]);
   const [startText, setStartText] = useState("");
   const [endText, setEndText] = useState("");
+  const [overnight, setOvernight] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [missing, setMissing] = useState(false);
@@ -98,6 +101,9 @@ export default function ShiftForm() {
       setBrk(existing.breakMinutes);
       setLabel(existing.label);
       setNote(existing.notes ?? "");
+      // A saved shift that ends on the next day was already confirmed as overnight.
+      setOvernight(typeof existing.startAt === "number" && typeof existing.endAt === "number" && existing.endAt - existing.startAt > 0
+        && minutesOfDay(existing.end) <= minutesOfDay(existing.start));
     }
   }, [existing]);
 
@@ -112,7 +118,7 @@ export default function ShiftForm() {
   }, [shiftId, existing]);
 
   useEffect(() => {
-    if (!shiftId && !employeeId && staff[0]) setEmployeeId(staff[0].id);
+    if (!shiftId && !employeeId && staff.length === 1) setEmployeeId(staff[0].id);
   }, [employeeId, shiftId, staff]);
 
   const person = staff.find((e) => e.id === employeeId);
@@ -121,6 +127,9 @@ export default function ShiftForm() {
   const dates = months ? repeatDatesForMonths(date, months, days) : [date];
   const startOk = !startText || !!normalizeTime(startText);
   const endOk = !endText || !!normalizeTime(endText);
+  // An end time at or before the start time only makes sense for a shift that runs past midnight.
+  // Require the administrator to say so, otherwise "9:00 AM – 8:00 AM" silently becomes 23 hours.
+  const crossesMidnight = !!normalizeTime(start) && !!normalizeTime(end) && minutesOfDay(end) <= minutesOfDay(start);
   const toggleDay = (d: number) => setDays((cur) => (cur.includes(d) ? cur.filter((x) => x !== d) : [...cur, d]));
   const touch = () => setDirty(true);
   const close = () => (dirty ? setLeave(true) : router.back());
@@ -171,6 +180,8 @@ export default function ShiftForm() {
         </ScrollView>
         {!staff.length ? (
           <Text style={[type.meta, { color: colors.warning }]}>Add an active employee before creating a shift.</Text>
+        ) : !person ? (
+          <Text style={[type.meta, { color: colors.warning }]}>Choose the employee who will work this shift.</Text>
         ) : null}
 
         <Text style={[type.section, { color: colors.text }]}>Date and time</Text>
@@ -179,6 +190,18 @@ export default function ShiftForm() {
         <TextField label="Or exact start time" value={startText} onChangeText={(v) => { touch(); setStartText(v); const n = normalizeTime(v); if (n) setStart(n); }} placeholder="e.g. 8:45 AM or 14:30" error={startOk ? undefined : "Use a time like 8:45 AM"} />
         <Picker label="End time" options={times} value={end} onChange={(v) => { touch(); setEnd(v); setEndText(""); }} />
         <TextField label="Or exact end time" value={endText} onChangeText={(v) => { touch(); setEndText(v); const n = normalizeTime(v); if (n) setEnd(n); }} placeholder="e.g. 5:15 PM or 17:15" error={endOk ? undefined : "Use a time like 5:15 PM"} />
+        {crossesMidnight ? (
+          <View style={{ gap: 6 }}>
+            <Text style={[type.meta, { color: overnight ? colors.textSecondary : colors.error }]}>
+              {overnight
+                ? "This shift ends the next day."
+                : "The end time is not after the start time. Pick a later end time, or confirm that the shift ends the next day."}
+            </Text>
+            <View style={{ flexDirection: "row" }}>
+              <FilterChip label="Ends the next day" active={overnight} onPress={() => { touch(); setOvernight(!overnight); }} />
+            </View>
+          </View>
+        ) : null}
         <Picker label="Break" options={breaks.map((b) => `${b} min`)} value={`${brk} min`} onChange={(v) => { touch(); setBrk(parseInt(v, 10)); }} />
 
         {!existing ? (
@@ -217,7 +240,7 @@ export default function ShiftForm() {
         <Button
           label={existing ? "Save changes" : dates.length > 1 ? `Save ${dates.length} shifts` : "Save shift"}
           loading={saving}
-          disabled={!person || person.status !== "Active" || !startOk || !endOk || start === end || dates.length === 0 || saving}
+          disabled={!person || person.status !== "Active" || !startOk || !endOk || start === end || (crossesMidnight && !overnight) || dates.length === 0 || saving}
           onPress={async () => {
             setSaving(true);
             try {

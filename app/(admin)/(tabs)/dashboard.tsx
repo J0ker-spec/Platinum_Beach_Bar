@@ -1,4 +1,3 @@
-import { fullName } from "@/src/data";
 import { greeting, todayLabel } from "@/src/dates";
 import { workplaceToday } from "@/src/lib/time";
 import { useStore } from "@/src/store";
@@ -11,7 +10,7 @@ import { Text, View } from "react-native";
 
 export default function AdminDashboard() {
   const router = useRouter();
-  const { userId, shifts, attendance, swaps, notifications, registrations, workplaceTimezone, businessName, businessAddress, getEmployee: findEmployee } = useStore();
+  const { userId, shifts, attendance, swaps, notifications, registrations, workplaceTimezone, businessName, businessAddress, getEmployee: findEmployee, employeeName } = useStore();
   const today = workplaceToday(workplaceTimezone);
   const todayShifts = shifts.filter((s) => s.date === today && (s.status === "Published" || s.status === "Updated"));
   const present = attendance.filter((a) => a.date === today && a.clockIn && a.clockIn !== "—");
@@ -71,14 +70,13 @@ export default function AdminDashboard() {
       <SectionHeader title="Today’s shifts" action="View all" onAction={() => router.push("/(admin)/(tabs)/schedule")} />
       <View style={{ gap: 10 }}>
         {todayShifts.map((shift) => {
-          const employee = findEmployee(shift.employeeId);
           const record = attendance.find((a) => a.employeeId === shift.employeeId && a.date === today);
           return (
             <Card key={shift.id}>
               <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
 
                 <View style={{ flex: 1 }}>
-                  <Text style={[type.card, { color: colors.text }]}>{employee ? fullName(employee) : shift.employeeId}</Text>
+                  <Text style={[type.card, { color: colors.text }]}>{employeeName(shift.employeeId)}</Text>
                   <Text style={[type.meta, { color: colors.textSecondary }]}>
                     {shift.start} – {shift.end} · {shift.label}
                   </Text>

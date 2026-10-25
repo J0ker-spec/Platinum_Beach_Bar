@@ -4,7 +4,7 @@ import { useStore } from "@/src/store";
 import { colors, type } from "@/src/theme";
 import { Button, Card, Dialog, EmptyState, Screen, Sheet, StatusBadge } from "@/src/ui";
 import { ShiftCard, WeekStrip, badgeTone } from "@/src/widgets";
-import { draftShiftsBetween, fullName } from "@/src/data";
+import { draftShiftsBetween } from "@/src/data";
 import { CalendarDays, ChevronLeft, ChevronRight, Pencil, Trash2 } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
@@ -12,7 +12,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 
 export default function AdminSchedule() {
   const router = useRouter();
-  const { shifts, publishSchedule, deleteShift, setSnack, workplaceTimezone, getEmployee: findEmployee } = useStore();
+  const { shifts, publishSchedule, deleteShift, setSnack, workplaceTimezone, getEmployee: findEmployee, employeeName } = useStore();
   const today = workplaceToday(workplaceTimezone);
   const [anchor, setAnchor] = useState(() => new Date(`${today}T12:00:00`));
   const dates = weekDates(anchor);
@@ -125,7 +125,7 @@ export default function AdminSchedule() {
                 {formatPretty(shift.date)} · {shift.start}–{shift.end}
               </Text>
               <Text style={[type.meta, { color: colors.textSecondary }]}>
-                {findEmployee(shift.employeeId) ? fullName(findEmployee(shift.employeeId)!) : shift.employeeId} · {shift.label}
+                {employeeName(shift.employeeId)} · {shift.label}
               </Text>
             </Card>
           ))}
@@ -161,7 +161,6 @@ export default function AdminSchedule() {
         </Text>
         <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={{ gap: 8 }}>
           {allDrafts.length ? allDrafts.map((shift) => {
-            const employee = findEmployee(shift.employeeId);
             return (
               <Card
                 key={shift.id}
@@ -176,7 +175,7 @@ export default function AdminSchedule() {
                   {formatPretty(shift.date)} · {shift.start}–{shift.end}
                 </Text>
                 <Text style={[type.meta, { color: colors.textSecondary }]}>
-                  {employee ? fullName(employee) : shift.employeeId} · {shift.label}
+                  {employeeName(shift.employeeId)} · {shift.label}
                 </Text>
               </Card>
             );
@@ -186,12 +185,13 @@ export default function AdminSchedule() {
         </ScrollView>
         <Button label="Close" variant="ghost" onPress={() => setDraftInboxOpen(false)} />
       </Sheet>
-      <Sheet visible={!!viewShift} onClose={() => setOpenShift(null)}>
+      {/* Hidden while the confirmation dialog is up: two stacked modals can swallow the second one. */}
+      <Sheet visible={!!viewShift && !confirmDelete} onClose={() => setOpenShift(null)}>
         {viewShift ? (
           <>
             <Text style={[type.section, { color: colors.text }]}>{formatPretty(viewShift.date)}</Text>
             <Text style={[type.title, { color: colors.text }]}>{viewShift.start} – {viewShift.end}</Text>
-            <Text style={[type.body, { color: colors.textSecondary }]}>{viewShift.label} · {findEmployee(viewShift.employeeId) ? fullName(findEmployee(viewShift.employeeId)) : viewShift.employeeId}</Text>
+            <Text style={[type.body, { color: colors.textSecondary }]}>{employeeName(viewShift.employeeId)} · {viewShift.label}</Text>
             <StatusBadge label={viewShift.status} tone={badgeTone(viewShift.status)} />
             {viewShift.status === "Draft" ? (
               <Button

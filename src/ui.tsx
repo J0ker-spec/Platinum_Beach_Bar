@@ -3,6 +3,7 @@ import { ChevronLeft, LucideIcon } from "lucide-react-native";
 import React, { useEffect, useRef } from "react";
 import {
   ActivityIndicator,
+  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -45,33 +46,15 @@ export function Screen({
 
 export function AppLogo({ size = 64 }: { size?: number }) {
   return (
-    <View
+    <Image
+      source={require("../assets/icon.png")}
+      resizeMode="contain"
       style={{
         width: size,
         height: size,
         borderRadius: size * 0.28,
-        backgroundColor: colors.paleBlue,
-        alignItems: "center",
-        justifyContent: "center",
-        borderWidth: 1,
-        borderColor: colors.border,
       }}
-    >
-      <View
-        style={{
-          width: size * 0.46,
-          height: size * 0.5,
-          borderRadius: 6,
-          borderWidth: 2,
-          borderColor: colors.primary,
-          alignItems: "center",
-          justifyContent: "flex-end",
-          paddingBottom: 6,
-        }}
-      >
-        <View style={{ width: 10, height: 6, borderBottomWidth: 2, borderRightWidth: 2, borderColor: colors.success, transform: [{ rotate: "45deg" }] }} />
-      </View>
-    </View>
+    />
   );
 }
 

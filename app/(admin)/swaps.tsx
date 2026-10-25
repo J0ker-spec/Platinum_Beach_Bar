@@ -1,4 +1,3 @@
-import { fullName } from "@/src/data";
 import { formatFull, formatPretty } from "@/src/dates";
 import { useStore } from "@/src/store";
 import { colors, type } from "@/src/theme";
@@ -14,7 +13,7 @@ const tabs = ["Pending", "Approved", "Declined"];
 
 export default function Swaps() {
   const router = useRouter();
-  const { swaps, shifts, updateSwap, setSnack, getEmployee: findEmployee } = useStore();
+  const { swaps, shifts, updateSwap, setSnack, employeeName } = useStore();
   const [tab, setTab] = useState("Pending");
   const [openId, setOpenId] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<"approve" | "decline" | null>(null);
@@ -29,8 +28,7 @@ export default function Swaps() {
   const rows = swaps.filter((s) => inTab(s.status));
   const current = swaps.find((s) => s.id === openId);
   const currentShift = current ? shifts.find((s) => s.id === current.shiftId) : undefined;
-  const from = current ? findEmployee(current.fromEmployeeId) : undefined;
-  const to = current ? findEmployee(current.toEmployeeId) : undefined;
+  const returnShift = current?.receivedShiftId ? shifts.find((s) => s.id === current.receivedShiftId) : undefined;
   const reviewable = current?.status === "Awaiting approval";
 
   return (
@@ -40,17 +38,15 @@ export default function Swaps() {
       <View style={{ gap: 10, marginTop: 14 }}>
         {rows.length ? (
           rows.map((s) => {
-            const a = findEmployee(s.fromEmployeeId);
-            const b = findEmployee(s.toEmployeeId);
             const sh = shifts.find((x) => x.id === s.shiftId);
             return (
               <Card key={s.id} onPress={() => setOpenId(s.id)}>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                  <Text style={[type.card, { color: colors.text }]}>{a ? fullName(a) : "Unknown"}</Text>
+                  <Text style={[type.card, { color: colors.text }]}>{employeeName(s.fromEmployeeId)}</Text>
                   <StatusBadge label={s.status} tone={badgeTone(s.status)} />
                 </View>
                 <Text style={[type.meta, { color: colors.textSecondary, marginTop: 4 }]}>
-                  {sh ? `${formatPretty(sh.date)} · ${sh.start} – ${sh.end}` : "Shift"} → {b ? fullName(b) : "Colleague"}
+                  {sh ? `${formatPretty(sh.date)} · ${sh.start} – ${sh.end}` : "Shift"} → {employeeName(s.toEmployeeId)}
                 </Text>
                 <Text style={[type.tiny, { color: colors.muted, marginTop: 4 }]}>
                   Submitted {formatPretty(s.submitted)}
@@ -71,7 +67,7 @@ export default function Swaps() {
             <StatusBadge label={current.status} tone={badgeTone(current.status)} />
             <Card style={{ backgroundColor: colors.surface }}>
               <Text style={[type.tiny, { color: colors.muted }]}>Current shift</Text>
-              <Text style={[type.card, { color: colors.text }]}>{from ? fullName(from) : ""} · {from?.id}</Text>
+              <Text style={[type.card, { color: colors.text }]}>{employeeName(current.fromEmployeeId)}</Text>
               {currentShift && (
                 <Text style={[type.meta, { color: colors.textSecondary }]}>
                   {formatFull(currentShift.date)} · {currentShift.start} – {currentShift.end}
@@ -80,7 +76,12 @@ export default function Swaps() {
             </Card>
             <Card style={{ backgroundColor: colors.lavenderSurface }}>
               <Text style={[type.tiny, { color: colors.secondary }]}>Proposed change</Text>
-              <Text style={[type.card, { color: colors.text }]}>{to ? fullName(to) : ""} takes this shift</Text>
+              <Text style={[type.card, { color: colors.text }]}>{employeeName(current.toEmployeeId)} takes this shift</Text>
+              {returnShift ? (
+                <Text style={[type.meta, { color: colors.textSecondary }]}>
+                  {employeeName(current.fromEmployeeId)} takes {formatFull(returnShift.date)} · {returnShift.start} – {returnShift.end} in return
+                </Text>
+              ) : null}
             </Card>
             {current.reason ? <Text style={[type.body, { color: colors.textSecondary }]}>“{current.reason}”</Text> : null}
             {current.decisionReason ? (
@@ -110,7 +111,9 @@ export default function Swaps() {
         visible={confirm === "approve"}
         icon={CheckCircle2}
         title="Approve swap?"
-        body={`${to ? fullName(to) : "The colleague"} will take ${from ? fullName(from) : "the employee"}’s shift.`}
+        body={current
+          ? `${employeeName(current.toEmployeeId)} will take ${employeeName(current.fromEmployeeId)}’s shift${returnShift ? ` and give ${returnShift.start} – ${returnShift.end} on ${formatPretty(returnShift.date)} in return` : ""}.`
+          : ""}
         primary="Approve"
         secondary="Cancel"
         onSecondary={() => setConfirm(null)}

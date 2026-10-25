@@ -1,11 +1,20 @@
 {
   "expo": {
-    "name": "Platnumx",
+    "name": "PlatinumX",
     "slug": "platinumx",
     "version": "1.0.0",
     "orientation": "portrait",
     "scheme": "platinumx",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "light",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F7F8FC"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": false,
@@ -13,7 +22,11 @@
     },
     "android": {
       "package": "com.vidal.platinumx",
-      "softwareKeyboardLayoutMode": "resize"
+      "softwareKeyboardLayoutMode": "resize",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#F7F8FC"
+      }
     },
     "plugins": [
       "expo-router",
@@ -22,7 +35,7 @@
       "expo-status-bar",
       "expo-web-browser",
       "expo-secure-store",
-      ["expo-camera", { "cameraPermission": "Platnumx uses the camera to scan the workplace attendance code." }]
+      ["expo-camera", { "cameraPermission": "PlatinumX uses the camera to scan the workplace attendance code." }]
     ],
     "experiments": {
       "typedRoutes": true

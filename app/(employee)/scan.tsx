@@ -212,7 +212,7 @@ export default function Scan() {
           state === "outside" && reviewedShift && window
             ? `This shift can be clocked into from ${formatWorkplaceTime(new Date(window.opensAt), workplaceTimezone)} to ${formatWorkplaceTime(new Date(window.closesAt), workplaceTimezone)}.`
             : {
-                invalid: "That is not a Platnumx attendance code, or it could not be processed.",
+                invalid: "That is not a PlatinumX attendance code, or it could not be processed.",
                 revoked: "The code was replaced, or you are outside the allowed clock-in window. Ask your manager for the current code.",
                 noshift: "You have no published shift today.",
                 duplicate: "You already have an attendance record for this shift.",

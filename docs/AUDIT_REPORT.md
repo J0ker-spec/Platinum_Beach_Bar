@@ -136,3 +136,23 @@ second sheet on some platforms.
 9. Announcement bodies are now limited to 5,000 characters in the rules; a legacy announcement longer
    than that would need to be shortened before it can be edited.
 10. The Firestore rules emit a harmless warning about an unused `docs()` helper function.
+
+
+## Follow-up audit (2026-10-22, second pass)
+
+* **`firestore.rules` and `firestore.indexes.json` had been overwritten** by the default files from
+  `firebase init` (commit 5c4a5f1): the rules were the open test-mode rule that expires on 2026-11-21 and
+  the audited rule changes above were lost. Both files were restored (rules re-include the shift `location`,
+  the published→cancelled transition, announcement draft editing/bounds and the clock-in defaults).
+  **Run `npx firebase deploy --only firestore --project <id>` to publish them.** Do not run
+  `firebase init firestore` again over these files.
+* Shift form: no employee is pre-selected for a new shift (a shift could be saved to the first person in
+  the list by accident); an end time at/before the start time must be confirmed as "Ends the next day".
+* Employees are listed alphabetically; admin screens never show a raw employee id (unknown people show
+  "Unknown employee").
+* Times are normalised to a plain-space "9:00 AM" (U+202F from some Intl builds stopped the saved time chip
+  from matching).
+* Swap review shows the return shift of a two-way swap; the delete/cancel confirmation no longer stacks a
+  second modal on top of the shift sheet.
+* Registrations of people who already have an employee record are hidden/removed (no duplicate employees);
+  attendance corrections accept "9:05am" / "14:30".

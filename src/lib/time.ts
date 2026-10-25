@@ -105,11 +105,13 @@ export function workplaceDateTime(date: string, time: string, timeZone: string):
 
 export function formatWorkplaceTime(date: Date | null | undefined, timeZone: string): string {
   if (!date) return "—";
+  // Some Intl builds (Safari/iOS, newer ICU) put U+202F before AM/PM. Normalise to a plain space so the
+  // value equals the picker options ("9:00 AM") and can be compared and re-parsed safely.
   return new Intl.DateTimeFormat("en-US", {
     timeZone,
     hour: "numeric",
     minute: "2-digit",
-  }).format(date);
+  }).format(date).replace(/[  ]/g, " ");
 }
 
 export function workplaceIsoDate(date: Date, timeZone: string): string {

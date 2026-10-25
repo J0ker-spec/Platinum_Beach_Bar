@@ -16,7 +16,7 @@ import {
   updateProfile,
   type User,
 } from "firebase/auth";
-import { doc, getDoc, onSnapshot, serverTimestamp, setDoc, writeBatch } from "firebase/firestore";
+import { deleteDoc, doc, getDoc, onSnapshot, serverTimestamp, setDoc, writeBatch } from "firebase/firestore";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Platform } from "react-native";
 
@@ -200,6 +200,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           await batch.commit(); // rules re-verify everything server-side
           link = await getDoc(doc(db, C.userLinks, user.uid));
           if (isStale()) return;
+          // Sign-up wrote a pending registration; now that the account is linked it must not stay in
+          // the administrators' approval queue (approving it would create a duplicate employee).
+          await deleteDoc(doc(db, C.registrations, user.uid)).catch(() => undefined);
         } else {
           // Email verified but no authorization yet: register for administrator approval.
           // Doc id = auth uid, so a user can only have one pending registration (create-once).

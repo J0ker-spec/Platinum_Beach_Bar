@@ -14,10 +14,10 @@ export default function About() {
 
   return (
     <Screen scroll>
-      <BackHeader title="About Platnumx" onBack={() => router.back()} />
+      <BackHeader title="About PlatinumX" onBack={() => router.back()} />
       <Card style={{ gap: 12 }}>
         <Text style={[type.body, { color: colors.textSecondary }]}>
-          Platnumx helps teams organize work schedules and stay up to date.
+          PlatinumX helps teams organize work schedules and stay up to date.
         </Text>
         <Text style={[type.section, { color: colors.text }]}>How it works</Text>
         <View style={{ gap: 10 }}>

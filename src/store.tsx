@@ -3,7 +3,7 @@ import { weekDates } from "@/src/dates";
 import { db } from "@/src/firebase/client";
 import { C } from "@/src/firebase/paths";
 import { encodeQr, newQrToken } from "@/src/lib/qr";
-import { formatWorkplaceTime, isValidIsoDate, isValidTimeZone, shiftInterval, workplaceDateTime, workplaceIsoDate } from "@/src/lib/time";
+import { formatWorkplaceTime, isValidIsoDate, normalizeTime, isValidTimeZone, shiftInterval, workplaceDateTime, workplaceIsoDate } from "@/src/lib/time";
 import {
   DEFAULT_CLOCK_IN_EARLY_MINUTES,
   DEFAULT_CLOCK_IN_LATE_MINUTES,
@@ -247,6 +247,8 @@ type Store = {
   retry: () => void;
   saveWorkplaceSettings: (settings: WorkplaceSettings) => Promise<void>;
   getEmployee: (id: string) => Employee | undefined;
+  /** Display name for an employee id; never falls back to the raw id. */
+  employeeName: (id: string) => string;
   signIn: (role: Role) => void;
   signOut: () => void;
   setSnack: (snack: Snack) => void;
@@ -1105,19 +1107,26 @@ export function PrototypeProvider({ children }: { children: React.ReactNode }) {
       if (!snap.exists()) throw new Error("This attendance record is no longer available.");
       const current = snap.data();
       const shiftDate = current.shiftDate as string;
-      const parseCorrectionTime = (value: string): Date | undefined => {
+      // Accept "9:05am", "09:05", "14:30" as well as "9:05 AM"; reject anything else with a clear message.
+      const normalizedTime = (value: string, field: string): string | undefined => {
         const trimmed = value.trim();
         if (!trimmed || trimmed === "—") return undefined;
-        return workplaceDateTime(shiftDate, trimmed, workplaceTimezone);
+        const normalized = normalizeTime(trimmed);
+        if (!normalized) throw new Error(`${field} must be a time like 9:05 AM.`);
+        return normalized;
       };
-      const correctedIn = parseCorrectionTime(clockIn);
-      let correctedOut = parseCorrectionTime(clockOut);
+      const inText = normalizedTime(clockIn, "Clock-in");
+      const outText = normalizedTime(clockOut, "Clock-out");
+      const parseCorrectionTime = (value: string | undefined): Date | undefined =>
+        value ? workplaceDateTime(shiftDate, value, workplaceTimezone) : undefined;
+      const correctedIn = parseCorrectionTime(inText);
+      let correctedOut = parseCorrectionTime(outText);
       if (!correctedIn && correctedOut) throw new Error("Clock-in is required when a clock-out time is recorded.");
       if (correctedIn && correctedOut && correctedOut <= correctedIn) {
         const nextDay = new Date(`${shiftDate}T12:00:00Z`);
         nextDay.setUTCDate(nextDay.getUTCDate() + 1);
         const nextDate = `${nextDay.getUTCFullYear()}-${String(nextDay.getUTCMonth() + 1).padStart(2, "0")}-${String(nextDay.getUTCDate()).padStart(2, "0")}`;
-        correctedOut = workplaceDateTime(nextDate, clockOut.trim(), workplaceTimezone);
+        correctedOut = workplaceDateTime(nextDate, outText as string, workplaceTimezone);
       }
       if (correctedIn && correctedOut && correctedOut <= correctedIn) {
         throw new Error("Clock-out must be later than clock-in.");
@@ -1407,6 +1416,12 @@ const addSwap = useCallback(
       if (!reg) throw new Error("This registration is no longer available.");
       const email = reg.email.trim().toLowerCase();
       if (!email) throw new Error("This registration has no email address and can't be approved.");
+      if (employees.some((employee) => employee.email.toLowerCase() === email)) {
+        // The person was already added (or linked through a pre-authorised email); approving would
+        // create a second employee record for the same email.
+        await deleteDoc(doc(db, C.registrations, uid)).catch(() => undefined);
+        throw new Error("This person already has an employee record. The duplicate request was removed.");
+      }
       const parts = reg.name.trim().split(/\s+/);
       const firstName = parts[0] || email.split("@")[0];
       const lastName = parts.slice(1).join(" ");
@@ -1441,7 +1456,7 @@ const addSwap = useCallback(
       }
       setSnack({ message: `${reg.name || reg.email} approved`, tone: "success" });
     },
-    [myId, registrations]
+    [myId, registrations, employees]
   );
 
   const rejectRegistration = useCallback(async (uid: string) => {
@@ -1540,6 +1555,13 @@ const addSwap = useCallback(
       (profile && profile.id === id ? toEmployee(id, { ...profile, role: profile.role }) : undefined),
     [employees, profile]
   );
+  const employeeName = useCallback(
+    (id: string) => {
+      const person = getEmployee(id);
+      return person ? fullName(person) : "Unknown employee";
+    },
+    [getEmployee]
+  );
   const setClockedIn = useCallback((v: boolean, time?: string) => {
     setClocked(v);
     if (time) setLastClockIn(time);
@@ -1618,18 +1640,30 @@ const addSwap = useCallback(
     [announcements, employees]
   );
 
+  // Snapshot merging appends changed documents, so the raw order is arbitrary. Pickers and lists
+  // must show people in a stable, alphabetical order.
+  const sortedEmployees = useMemo(
+    () => [...employees].sort((a, b) => fullName(a).localeCompare(fullName(b), undefined, { sensitivity: "base" }) || a.id.localeCompare(b.id)),
+    [employees]
+  );
+  // A sign-up that already belongs to an employee (pre-authorised email) is not awaiting approval.
+  const pendingRegistrations = useMemo(
+    () => registrations.filter((reg) => !employees.some((employee) => employee.email && employee.email.toLowerCase() === reg.email.toLowerCase())),
+    [registrations, employees]
+  );
+
   const value = useMemo<Store>(
     () => ({
       role,
       userId: myId,
-      employees,
+      employees: sortedEmployees,
       shifts,
       attendance,
       swaps,
       announcements: displayAnnouncements,
       notifications,
       notificationPreferences,
-      registrations,
+      registrations: pendingRegistrations,
       clockedIn: clockedIn || (!!myId && !!pickOpenAttendance(attendance, myId)),
       lastClockIn,
       qrLabel,
@@ -1643,6 +1677,7 @@ const addSwap = useCallback(
       retry,
       saveWorkplaceSettings,
       getEmployee,
+      employeeName,
       signIn: () => undefined, // real sign-in lives in AuthProvider
       signOut: () => void authSignOut(),
       setSnack,
@@ -1670,7 +1705,7 @@ const addSwap = useCallback(
       rejectRegistration,
       setEmployeeRole,
     }),
-    [role, myId, employees, shifts, attendance, swaps, displayAnnouncements, notifications, notificationPreferences, registrations, clockedIn, lastClockIn, qrLabel, qrToken, snack, listenerError, workplaceTimezone, clockInEarlyMinutes, clockInLateMinutes, businessDetails, retry, saveWorkplaceSettings, getEmployee, setClockedIn, saveNotificationPreferences, upsertEmployee, addShift, addShifts, updateShift, deleteShift, publishSchedule, publishAnnouncement, saveAnnouncementDraft, deleteAnnouncement, replaceQr, markNotificationsRead, correctAttendance, updateSwap, respondToSwap, addSwap, cancelSwap, clockIn, clockOut, approveRegistration, rejectRegistration, setEmployeeRole, authSignOut]
+    [role, myId, sortedEmployees, shifts, attendance, swaps, displayAnnouncements, notifications, notificationPreferences, pendingRegistrations, clockedIn, lastClockIn, qrLabel, qrToken, snack, listenerError, workplaceTimezone, clockInEarlyMinutes, clockInLateMinutes, businessDetails, retry, saveWorkplaceSettings, getEmployee, employeeName, setClockedIn, saveNotificationPreferences, upsertEmployee, addShift, addShifts, updateShift, deleteShift, publishSchedule, publishAnnouncement, saveAnnouncementDraft, deleteAnnouncement, replaceQr, markNotificationsRead, correctAttendance, updateSwap, respondToSwap, addSwap, cancelSwap, clockIn, clockOut, approveRegistration, rejectRegistration, setEmployeeRole, authSignOut]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

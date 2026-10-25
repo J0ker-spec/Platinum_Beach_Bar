@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatWorkplaceTime,
   isValidIsoDate,
   isValidTimeZone,
   normalizeTime,
@@ -74,5 +75,21 @@ describe("workplace date and time", () => {
   it("rejects unknown IANA zones", () => {
     expect(isValidTimeZone("America/New_York")).toBe(true);
     expect(isValidTimeZone("Not/A_Timezone")).toBe(false);
+  });
+});
+
+describe("formatWorkplaceTime", () => {
+  it("renders a plain-space 'h:mm AM' string that matches the picker options", () => {
+    const instant = new Date(Date.UTC(2030, 0, 1, 14, 0));
+    const text = formatWorkplaceTime(instant, "America/New_York");
+    expect(text).toBe("9:00 AM");
+    expect(text).not.toMatch(/[\u202f\u00a0]/);
+  });
+
+  it("round-trips through shiftInterval for an overnight shift", () => {
+    const { startAt, endAt } = shiftInterval("2030-03-04", "10:00 PM", "6:00 AM", "America/New_York");
+    expect(formatWorkplaceTime(startAt, "America/New_York")).toBe("10:00 PM");
+    expect(formatWorkplaceTime(endAt, "America/New_York")).toBe("6:00 AM");
+    expect(workplaceIsoDate(endAt, "America/New_York")).toBe("2030-03-05");
   });
 });

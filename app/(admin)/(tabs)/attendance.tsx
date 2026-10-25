@@ -1,4 +1,3 @@
-import { fullName } from "@/src/data";
 import { useStore } from "@/src/store";
 import { workplaceToday } from "@/src/lib/time";
 import { colors, type } from "@/src/theme";
@@ -9,7 +8,7 @@ import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
 export default function AdminAttendance() {
-  const { attendance, shifts, correctAttendance, setSnack, workplaceTimezone, getEmployee: findEmployee } = useStore();
+  const { attendance, shifts, correctAttendance, setSnack, workplaceTimezone, getEmployee: findEmployee, employeeName } = useStore();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All");
   const [open, setOpen] = useState<string | null>(null);
@@ -27,8 +26,7 @@ export default function AdminAttendance() {
   // not missing.
   const notClockedIn = [...scheduledIds].filter((id) => !presentIds.has(id)).length;
   const rows = attendance.filter((row) => {
-    const employee = findEmployee(row.employeeId);
-    const matches = `${fullName(employee)} ${row.employeeId}`.toLowerCase().includes(query.toLowerCase());
+    const matches = employeeName(row.employeeId).toLowerCase().includes(query.toLowerCase());
     return matches && (filter === "All" || row.status === filter);
   });
   const current = attendance.find((a) => a.id === open);
@@ -69,8 +67,8 @@ export default function AdminAttendance() {
                 <View style={{ flexDirection: "row", gap: 10 }}>
                   <Avatar initials={employee?.initials ?? "?"} color={employee?.accent} />
                   <View style={{ flex: 1 }}>
-                    <Text style={[type.card, { color: colors.text }]}>{employee ? fullName(employee) : row.employeeId}</Text>
-                    <Text style={[type.tiny, { color: colors.muted }]}>{row.employeeId}</Text>
+                    <Text style={[type.card, { color: colors.text }]}>{employeeName(row.employeeId)}</Text>
+                    <Text style={[type.tiny, { color: colors.muted }]}>{row.date}</Text>
                     <Text style={[type.meta, { color: colors.textSecondary }]}>
                       {row.scheduledStart}–{row.scheduledEnd} · In {row.clockIn || "—"} · Out {row.clockOut || "missing"}
                     </Text>
@@ -88,8 +86,8 @@ export default function AdminAttendance() {
       <Sheet visible={!!current} onClose={() => setOpen(null)}>
         {current ? (
           <>
-            <Text style={[type.section, { color: colors.text }]}>{currentEmployee ? fullName(currentEmployee) : current.employeeId}</Text>
-            <Text style={[type.meta, { color: colors.muted }]}>{current.employeeId} · {current.date}</Text>
+            <Text style={[type.section, { color: colors.text }]}>{employeeName(current.employeeId)}</Text>
+            <Text style={[type.meta, { color: colors.muted }]}>{current.date}</Text>
             <Text style={[type.body, { color: colors.text }]}>Scheduled {current.scheduledStart} – {current.scheduledEnd}</Text>
             <Text style={[type.body, { color: colors.text }]}>Recorded in {current.clockIn ?? "—"} / out {current.clockOut ?? "—"}</Text>
             <StatusBadge label={current.status} tone={badgeTone(current.status)} />

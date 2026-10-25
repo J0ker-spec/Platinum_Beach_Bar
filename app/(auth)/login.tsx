@@ -1,5 +1,5 @@
 import { useAuth, type AuthStatus } from "@/src/auth/AuthProvider";
-import { AuthShell, FormError, OrDivider, PasswordField, SwitchLink } from "@/src/auth/AuthShell";
+import { AuthShell, FormError, PasswordField, SwitchLink } from "@/src/auth/AuthShell";
 import { BUSINESS_NAME, colors, type } from "@/src/theme";
 import { Button, TextField } from "@/src/ui";
 import { useRouter } from "expo-router";
@@ -33,7 +33,7 @@ const MESSAGES: Partial<Record<AuthStatus, { title: string; body: string }>> = {
 
 export default function Login() {
   const router = useRouter();
-  const { status, error, googleEmail, signInWithEmail, signInWithGoogle, signOut, canSignIn, clearError } = useAuth();
+  const { status, error, googleEmail, signInWithEmail, signOut, clearError } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -105,12 +105,6 @@ export default function Login() {
             disabled={status === "unconfigured"}
             loading={busy || checking}
           />
-          {canSignIn ? (
-            <>
-              <OrDivider />
-              <Button label="Continue with Google" variant="secondary" onPress={signInWithGoogle} disabled={checking} />
-            </>
-          ) : null}
           <SwitchLink prompt="New here?" action="Create an account" onPress={() => router.replace("/(auth)/signup")} />
         </>
       )}

@@ -27,3 +27,4 @@ firebase-debug.log
 firestore-debug.log
 ui-debug.log
 *.keystore
+.claude/data/healthcare/documents/

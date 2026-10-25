@@ -1,5 +1,5 @@
 import { useAuth } from "@/src/auth/AuthProvider";
-import { AuthShell, FormError, OrDivider, PasswordField, SwitchLink } from "@/src/auth/AuthShell";
+import { AuthShell, FormError, PasswordField, SwitchLink } from "@/src/auth/AuthShell";
 import { colors, type } from "@/src/theme";
 import { Button, TextField } from "@/src/ui";
 import { useRouter } from "expo-router";
@@ -10,7 +10,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function SignUp() {
   const router = useRouter();
-  const { signUpWithEmail, signInWithGoogle, canSignIn, error, clearError } = useAuth();
+  const { signUpWithEmail, error, clearError } = useAuth();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -75,12 +75,6 @@ export default function SignUp() {
         Creating an account only registers your email here. After you verify your address, an administrator must approve your
         account and assign your role before you can sign in.
       </Text>
-      {canSignIn ? (
-        <>
-          <OrDivider />
-          <Button label="Continue with Google" variant="secondary" onPress={signInWithGoogle} />
-        </>
-      ) : null}
       <SwitchLink prompt="Already have an account?" action="Log in" onPress={() => router.replace("/(auth)/login")} />
     </AuthShell>
   );
