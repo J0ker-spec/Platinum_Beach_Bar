@@ -172,16 +172,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setStatus("unauthorized");
         return;
       }
-      if (!user.emailVerified) {
-        await reload(user).catch(() => undefined);
-      }
       if (isStale()) return;
       if (!user.emailVerified) {
         setStatus("unverified");
         return;
       }
-      await user.getIdToken(true).catch(() => undefined);
-      if (isStale()) return;
       const emailKey = user.email.toLowerCase();
       let link = await getDoc(doc(db, C.userLinks, user.uid));
       if (isStale()) return;

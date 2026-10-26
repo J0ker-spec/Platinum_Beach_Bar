@@ -47,7 +47,7 @@ export function Screen({
 export function AppLogo({ size = 64 }: { size?: number }) {
   return (
     <Image
-      source={require("../assets/icon.png")}
+      source={require("../assets/app-logo.png")}
       resizeMode="contain"
       style={{
         width: size,
